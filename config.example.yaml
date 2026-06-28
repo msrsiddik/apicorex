@@ -1,0 +1,26 @@
+# ApiCoreX gateway config (optional). Set CONFIG_FILE=path to load.
+# Env vars override the global default: RATE_PER_SEC, BULKHEAD_MAX,
+# CB_THRESHOLD, CB_RESET_TIMEOUT, REQUEST_TIMEOUT, HEALTH_INTERVAL.
+
+# Global default applied to every plugin unless overridden below.
+default:
+  rate_per_sec: 1000       # requests/sec per plugin
+  rate_burst: 1000         # token bucket burst
+  bulkhead_max: 100        # max concurrent in-flight per plugin
+  cb_threshold: 5          # failures before circuit opens
+  cb_reset_timeout: 30s    # how long the breaker stays open
+  request_timeout: 30s     # upstream request timeout
+
+# How often Core health-checks each plugin (GET /_apicorex/health).
+health_interval: 30s
+
+# Per-plugin overrides. Only set the fields you want to change; the rest
+# inherit from `default`.
+plugins:
+  billing:
+    rate_per_sec: 2000     # billing gets a higher limit
+    cb_threshold: 10
+  # public-facing plugins can be locked down tighter:
+  # webhooks:
+  #   rate_per_sec: 50
+  #   bulkhead_max: 20
