@@ -5,11 +5,12 @@ package manifest
 import "encoding/json"
 
 type Route struct {
-	Method  string   `json:"method"`
-	Path    string   `json:"path"`
-	Public  bool     `json:"public"`
-	Summary string   `json:"summary,omitempty"`
-	Tags    []string `json:"tags,omitempty"`
+	Method     string   `json:"method"`
+	Path       string   `json:"path"`
+	Public     bool     `json:"public"`
+	Permission string   `json:"permission,omitempty"` // required permission to call; "" = any authenticated
+	Summary    string   `json:"summary,omitempty"`
+	Tags       []string `json:"tags,omitempty"`
 }
 
 type Migration struct {

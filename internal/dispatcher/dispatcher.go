@@ -36,6 +36,7 @@ type routeEntry struct {
 	method     string // "*" = any
 	pattern    string // e.g. "/auth/login", "/billing/*"
 	public     bool
+	permission string // required permission; "" = any authenticated
 }
 
 // Dispatcher routes HTTP requests to registered plugins and proxies them with
@@ -112,6 +113,7 @@ func (d *Dispatcher) AddRoutes(pluginID, pluginName, pluginType string, routes [
 			method:     strings.ToUpper(r.Method),
 			pattern:    r.Path,
 			public:     r.Public,
+			permission: r.Permission,
 		})
 	}
 	limits := d.cfg.For(pluginName)
@@ -228,6 +230,18 @@ func (d *Dispatcher) Dispatch(c *gin.Context) {
 		return
 	}
 	plugin := entry.pluginName
+
+	// Authorization: a non-public route declaring a permission requires the
+	// caller's verified claims to satisfy it (wildcards honored). Auth middleware
+	// has already run, so claims are present for protected routes.
+	if !entry.public && entry.permission != "" {
+		claims := middleware.ClaimsFrom(c)
+		if claims == nil || !middleware.PermissionAllowed(claims.Permissions, entry.permission) {
+			protection.RequestsRejected.WithLabelValues(plugin, "forbidden").Inc()
+			c.JSON(http.StatusForbidden, gin.H{"error": "missing permission: " + entry.permission})
+			return
+		}
+	}
 
 	pluginEntry, ok := d.reg.Get(entry.pluginID)
 	if !ok || !pluginEntry.Alive {

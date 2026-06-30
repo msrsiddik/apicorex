@@ -14,11 +14,14 @@ import (
 // token and injects into proxied requests as X-ApiCoreX-* headers. The standard
 // registered claims (subject, expiry, jti) are embedded.
 type Claims struct {
-	TenantID   string   `json:"tenant_id"`
-	TenantSlug string   `json:"tenant_slug"`
-	SchemaName string   `json:"schema_name"`
-	UserType   string   `json:"user_type"`
-	Roles      []string `json:"roles"`
+	TenantID    string   `json:"tenant_id"`
+	TenantSlug  string   `json:"tenant_slug"`
+	SchemaName  string   `json:"schema_name"`
+	BranchID    string   `json:"branch_id,omitempty"`
+	BranchSlug  string   `json:"branch_slug,omitempty"`
+	UserType    string   `json:"user_type"`
+	Roles       []string `json:"roles"`
+	Permissions []string `json:"permissions,omitempty"`
 	jwt.RegisteredClaims
 }
 

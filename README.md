@@ -122,8 +122,16 @@ Minimal contract:
 - `GET /_apicorex/health` → `{"status":"ok"}`
 - `POST {CORE_URL}/_core/register` on boot (with retry); then heartbeat
 
-Inside a handler, read the tenant context Core injected:
-`X-ApiCoreX-Tenant-ID`, `X-ApiCoreX-User-ID`, `X-ApiCoreX-Roles`, `X-ApiCoreX-Schema`.
+Inside a handler, read the context Core injected after verifying the JWT:
+`X-ApiCoreX-Tenant-ID`, `X-ApiCoreX-Tenant-Slug`, `X-ApiCoreX-Schema`,
+`X-ApiCoreX-Branch-ID`, `X-ApiCoreX-Branch-Slug`, `X-ApiCoreX-User-ID`,
+`X-ApiCoreX-User-Type`, `X-ApiCoreX-Roles`, `X-ApiCoreX-Permissions`.
+
+**Authorization.** A manifest route may declare a `permission`
+(`"resource:action"`, with `*` wildcards). Before proxying, Core checks the
+caller's `permissions` claim against it (wildcard-aware) and returns `403` if it
+is missing — so a plugin gets authorization at the gateway for free, and can
+re-check the header for defense-in-depth.
 
 ---
 

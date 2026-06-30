@@ -68,6 +68,23 @@ func TestDispatcher_IsPublic(t *testing.T) {
 	}
 }
 
+// A route's declared permission is carried into the dispatch table so the
+// authz check in Dispatch can enforce it.
+func TestDispatcher_RoutePermission(t *testing.T) {
+	d := newTestDispatcher()
+	d.AddRoutes("id1", "identity", "internal", []manifest.Route{
+		{Method: "POST", Path: "/branches", Public: false, Permission: "branch:write"},
+		{Method: "GET", Path: "/branches", Public: false}, // no permission
+	})
+
+	if e := d.match("POST", "/branches"); e == nil || e.permission != "branch:write" {
+		t.Errorf("POST /branches permission = %v, want branch:write", e)
+	}
+	if e := d.match("GET", "/branches"); e == nil || e.permission != "" {
+		t.Errorf("GET /branches should carry no permission, got %q", e.permission)
+	}
+}
+
 func TestDispatcher_RemoveRoutes(t *testing.T) {
 	d := newTestDispatcher()
 	d.AddRoutes("id1", "auth", "internal", []manifest.Route{
