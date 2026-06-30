@@ -10,6 +10,7 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -46,6 +47,10 @@ func NewHTTP(
 	gin.SetMode(gin.ReleaseMode)
 	engine := gin.New()
 	engine.Use(gin.Recovery())
+
+	// CORS first — browser preflight (OPTIONS) must get CORS headers, not 401.
+	// Allowed origins come from CORS_ALLOWED_ORIGINS (comma-separated); empty = any.
+	engine.Use(middleware.CORS(middleware.ParseOrigins(os.Getenv("CORS_ALLOWED_ORIGINS"))))
 
 	// control plane: plugins register/heartbeat/deregister here
 	cpHandlers.Mount(engine)
