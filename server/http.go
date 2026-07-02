@@ -61,6 +61,10 @@ func NewHTTP(
 		option.WithVersion("1.0.0"),
 		option.WithDisableDocs(),
 		option.WithSecurity("bearerAuth", option.SecurityHTTPBearer("Bearer")),
+		// Require it globally so Scalar's "Authorize" button applies to every
+		// operation (Core's own + every merged plugin spec), not just ones that
+		// happen to declare per-operation security.
+		option.WithGlobalSecurity("bearerAuth"),
 	)
 
 	// Prometheus metrics — no auth

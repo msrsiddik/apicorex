@@ -3,6 +3,7 @@ package dispatcher
 import (
 	"testing"
 
+	"github.com/msrsiddik/apicorex/internal/auth"
 	"github.com/msrsiddik/apicorex/internal/config"
 	"github.com/msrsiddik/apicorex/internal/manifest"
 	"github.com/msrsiddik/apicorex/internal/protection"
@@ -82,6 +83,43 @@ func TestDispatcher_RoutePermission(t *testing.T) {
 	}
 	if e := d.match("GET", "/branches"); e == nil || e.permission != "" {
 		t.Errorf("GET /branches should carry no permission, got %q", e.permission)
+	}
+}
+
+// A platform admin is authorized on any permission-declaring route even with
+// no (or unrelated) tenant permissions — they act across tenants by design and
+// may hold no tenant role at all.
+func TestAuthorized_PlatformAdminBypasses(t *testing.T) {
+	entry := &routeEntry{permission: "plugin:install"}
+
+	admin := &auth.Claims{UserType: "platform_admin"} // no Permissions at all
+	if !authorized(admin, entry) {
+		t.Error("platform admin should be authorized regardless of permissions")
+	}
+}
+
+// A regular tenant user needs the matching (or wildcard) permission; lacking
+// it, or being unauthenticated, is rejected.
+func TestAuthorized_TenantUser(t *testing.T) {
+	entry := &routeEntry{permission: "plugin:install"}
+
+	withPerm := &auth.Claims{UserType: "tenant_user", Permissions: []string{"plugin:install"}}
+	if !authorized(withPerm, entry) {
+		t.Error("tenant user with the exact permission should be authorized")
+	}
+
+	withWildcard := &auth.Claims{UserType: "tenant_user", Permissions: []string{"plugin:*"}}
+	if !authorized(withWildcard, entry) {
+		t.Error("tenant user with a wildcard permission should be authorized")
+	}
+
+	withoutPerm := &auth.Claims{UserType: "tenant_user", Permissions: []string{"branch:read"}}
+	if authorized(withoutPerm, entry) {
+		t.Error("tenant user without the permission should not be authorized")
+	}
+
+	if authorized(nil, entry) {
+		t.Error("nil claims (unauthenticated) should not be authorized")
 	}
 }
 

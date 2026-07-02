@@ -71,6 +71,7 @@ func (inj *Injector) MergedSpec(baseSpec []byte) []byte {
 		baseComponents = make(map[string]interface{})
 		merged["components"] = baseComponents
 	}
+	baseSecurity, _ := merged["security"].([]interface{})
 
 	for _, raw := range pluginSpecs {
 		var doc map[string]interface{}
@@ -100,11 +101,44 @@ func (inj *Injector) MergedSpec(baseSpec []byte) []byte {
 				baseComponents[section] = existing
 			}
 		}
+
+		// merge the root security requirement (so Scalar's "Authorize" button
+		// applies globally even if the base spec didn't declare one itself —
+		// e.g. a plugin's spec carries it but Core's base spec doesn't).
+		if sec, ok := doc["security"].([]interface{}); ok {
+			baseSecurity = mergeSecurityRequirements(baseSecurity, sec)
+		}
+	}
+	if len(baseSecurity) > 0 {
+		merged["security"] = baseSecurity
 	}
 
 	out, err := json.Marshal(merged)
 	if err != nil {
 		return baseSpec
+	}
+	return out
+}
+
+// mergeSecurityRequirements unions two OpenAPI "security" arrays (each element
+// is a requirement object: scheme name -> scopes), de-duplicating identical
+// requirement objects so the same scheme declared by both Core and a plugin
+// only appears once.
+func mergeSecurityRequirements(base, add []interface{}) []interface{} {
+	seen := make(map[string]bool, len(base)+len(add))
+	out := make([]interface{}, 0, len(base)+len(add))
+	for _, reqs := range [][]interface{}{base, add} {
+		for _, req := range reqs {
+			key, err := json.Marshal(req)
+			if err != nil {
+				continue
+			}
+			if seen[string(key)] {
+				continue
+			}
+			seen[string(key)] = true
+			out = append(out, req)
+		}
 	}
 	return out
 }

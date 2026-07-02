@@ -18,6 +18,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/msrsiddik/apicorex/internal/auth"
 	"github.com/msrsiddik/apicorex/internal/config"
 	"github.com/msrsiddik/apicorex/internal/manifest"
 	"github.com/msrsiddik/apicorex/internal/middleware"
@@ -202,6 +203,21 @@ func (d *Dispatcher) IsPublic(method, path string) bool {
 	return entry != nil && entry.public
 }
 
+// authorized reports whether claims satisfy entry's declared permission: either
+// the permission itself (wildcards honored) or platform_admin, since platform
+// admins act across tenants by design and may hold no tenant role — and thus no
+// tenant-scoped permissions — at all. Callers only invoke this when
+// entry.permission != "" (an empty permission means "any authenticated user").
+func authorized(claims *auth.Claims, entry *routeEntry) bool {
+	if claims == nil {
+		return false
+	}
+	if claims.UserType == "platform_admin" {
+		return true
+	}
+	return middleware.PermissionAllowed(claims.Permissions, entry.permission)
+}
+
 // Dispatch is the Gin catch-all handler. It matches the request to a plugin,
 // runs the protection layers, injects tenant headers, starts a trace span, and
 // proxies the request (streaming, or hijacked for WebSocket). It records metrics
@@ -232,15 +248,12 @@ func (d *Dispatcher) Dispatch(c *gin.Context) {
 	plugin := entry.pluginName
 
 	// Authorization: a non-public route declaring a permission requires the
-	// caller's verified claims to satisfy it (wildcards honored). Auth middleware
-	// has already run, so claims are present for protected routes.
-	if !entry.public && entry.permission != "" {
-		claims := middleware.ClaimsFrom(c)
-		if claims == nil || !middleware.PermissionAllowed(claims.Permissions, entry.permission) {
-			protection.RequestsRejected.WithLabelValues(plugin, "forbidden").Inc()
-			c.JSON(http.StatusForbidden, gin.H{"error": "missing permission: " + entry.permission})
-			return
-		}
+	// caller's verified claims to satisfy it. Auth middleware has already run,
+	// so claims are present for protected routes.
+	if !entry.public && entry.permission != "" && !authorized(middleware.ClaimsFrom(c), entry) {
+		protection.RequestsRejected.WithLabelValues(plugin, "forbidden").Inc()
+		c.JSON(http.StatusForbidden, gin.H{"error": "missing permission: " + entry.permission})
+		return
 	}
 
 	pluginEntry, ok := d.reg.Get(entry.pluginID)
