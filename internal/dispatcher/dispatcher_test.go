@@ -92,7 +92,7 @@ func TestDispatcher_RoutePermission(t *testing.T) {
 func TestAuthorized_PlatformAdminBypasses(t *testing.T) {
 	entry := &routeEntry{permission: "plugin:install"}
 
-	admin := &auth.Claims{UserType: "platform_admin"} // no Permissions at all
+	admin := &auth.Identity{UserType: "platform_admin"} // no Permissions at all
 	if !authorized(admin, entry) {
 		t.Error("platform admin should be authorized regardless of permissions")
 	}
@@ -103,23 +103,23 @@ func TestAuthorized_PlatformAdminBypasses(t *testing.T) {
 func TestAuthorized_TenantUser(t *testing.T) {
 	entry := &routeEntry{permission: "plugin:install"}
 
-	withPerm := &auth.Claims{UserType: "tenant_user", Permissions: []string{"plugin:install"}}
+	withPerm := &auth.Identity{UserType: "tenant_user", Permissions: []string{"plugin:install"}}
 	if !authorized(withPerm, entry) {
 		t.Error("tenant user with the exact permission should be authorized")
 	}
 
-	withWildcard := &auth.Claims{UserType: "tenant_user", Permissions: []string{"plugin:*"}}
+	withWildcard := &auth.Identity{UserType: "tenant_user", Permissions: []string{"plugin:*"}}
 	if !authorized(withWildcard, entry) {
 		t.Error("tenant user with a wildcard permission should be authorized")
 	}
 
-	withoutPerm := &auth.Claims{UserType: "tenant_user", Permissions: []string{"branch:read"}}
+	withoutPerm := &auth.Identity{UserType: "tenant_user", Permissions: []string{"branch:read"}}
 	if authorized(withoutPerm, entry) {
 		t.Error("tenant user without the permission should not be authorized")
 	}
 
 	if authorized(nil, entry) {
-		t.Error("nil claims (unauthenticated) should not be authorized")
+		t.Error("nil identity (unauthenticated) should not be authorized")
 	}
 }
 

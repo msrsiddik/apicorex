@@ -1,9 +1,11 @@
-// Package middleware holds Core's Gin middleware: JWT authentication (with an
-// optional logout denylist) and tenant-context header handling. Together they
-// ensure every proxied request carries trusted, un-spoofable tenant identity.
+// Package middleware holds Core's Gin middleware: device-token authentication
+// (via Identity introspection) and tenant-context header handling. Together
+// they ensure every proxied request carries trusted, un-spoofable tenant
+// identity resolved fresh for the ACTING user.
 package middleware
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -11,15 +13,21 @@ import (
 	"github.com/msrsiddik/apicorex/internal/auth"
 )
 
-const claimsKey = "claims"
+const identityKey = "identity"
 
-// Auth returns middleware that requires a valid Bearer access token. It rejects
-// missing/invalid tokens and, when a denylist is configured, revoked (logged-out)
-// ones. On success the claims are stored on the context for ClaimsFrom. A nil
-// verifier disables auth (dev only).
-func Auth(verifier *auth.Verifier, denylist *auth.Denylist) gin.HandlerFunc {
+// HeaderActingUser is CLIENT-supplied input: the PIN-unlocked user the device
+// claims is operating it. It is validated (membership + status) during
+// introspection, then consumed — plugins never see it, only the trusted
+// X-ApiCoreX-User-ID that results.
+const HeaderActingUser = "X-Acting-User"
+
+// Auth returns middleware that requires a valid opaque device token
+// (Bearer zdt_...). The token is hashed and resolved through Identity together
+// with the optional X-Acting-User header; the resulting Identity is stored on
+// the context for IdentityFrom. A nil introspector disables auth (dev only).
+func Auth(introspector *auth.Introspector) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if verifier == nil {
+		if introspector == nil {
 			c.Next()
 			return
 		}
@@ -29,25 +37,31 @@ func Auth(verifier *auth.Verifier, denylist *auth.Denylist) gin.HandlerFunc {
 			return
 		}
 		tokenStr := strings.TrimPrefix(header, "Bearer ")
-		claims, err := verifier.Verify(tokenStr)
-		if err != nil {
+		if !strings.HasPrefix(tokenStr, "zdt_") {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
 			return
 		}
-		// logout denylist check (revoked access tokens)
-		if denylist.IsRevoked(c.Request.Context(), claims.ID) {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "token revoked"})
+		id, err := introspector.Resolve(c.Request.Context(), auth.HashToken(tokenStr), c.GetHeader(HeaderActingUser))
+		switch {
+		case errors.Is(err, auth.ErrMembershipRevoked):
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "membership revoked"})
+			return
+		case errors.Is(err, auth.ErrInvalidToken):
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+			return
+		case err != nil:
+			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "auth unavailable"})
 			return
 		}
-		c.Set(claimsKey, claims)
+		c.Set(identityKey, id)
 		c.Next()
 	}
 }
 
-// ClaimsFrom returns the verified claims stored by Auth, or nil if the request
-// was not authenticated (e.g. a public route).
-func ClaimsFrom(c *gin.Context) *auth.Claims {
-	v, _ := c.Get(claimsKey)
-	claims, _ := v.(*auth.Claims)
-	return claims
+// IdentityFrom returns the resolved identity stored by Auth, or nil if the
+// request was not authenticated (e.g. a public route).
+func IdentityFrom(c *gin.Context) *auth.Identity {
+	v, _ := c.Get(identityKey)
+	id, _ := v.(*auth.Identity)
+	return id
 }

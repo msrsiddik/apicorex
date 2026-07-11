@@ -34,13 +34,12 @@ type HTTPServer struct {
 
 // NewHTTP builds the configured server: it mounts the control plane, core
 // endpoints, docs, and the middleware chain, and sets the dispatcher as the
-// catch-all handler. denylist may be nil to disable logout revocation.
+// catch-all handler. introspector may be nil to disable auth (dev only).
 func NewHTTP(
 	reg *registry.Registry,
 	disp *dispatcher.Dispatcher,
 	injector *openapi.Injector,
-	verifier *auth.Verifier,
-	denylist *auth.Denylist,
+	introspector *auth.Introspector,
 	cpHandlers *controlplane.Handlers,
 	addr string,
 ) *HTTPServer {
@@ -111,7 +110,7 @@ func NewHTTP(
 	engine.Use(middleware.StripSpoofedHeaders())
 
 	// auth middleware — skip core endpoints, control plane, and plugin public routes
-	authMiddleware := middleware.Auth(verifier, denylist)
+	authMiddleware := middleware.Auth(introspector)
 	engine.Use(func(c *gin.Context) {
 		p := c.Request.URL.Path
 		if p == "/health" || p == "/plugins" || p == "/metrics" || strings.HasPrefix(p, "/docs") || strings.HasPrefix(p, "/_core") {

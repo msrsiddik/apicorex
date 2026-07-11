@@ -27,9 +27,7 @@ func main() {
 	godotenv.Load()
 
 	httpAddr := envOr("HTTP_PORT", ":8080")
-	jwtSecret := envOr("JWT_SECRET", "")
 	pluginAPIKey := envOr("PLUGIN_API_KEY", "")
-	redisURL := envOr("REDIS_URL", "")
 	allowlist := splitCSV(envOr("PLUGIN_ALLOWLIST", "")) // empty = allow any (dev)
 
 	cfg, err := config.Load()
@@ -54,29 +52,17 @@ func main() {
 	injector := openapi.NewInjector()
 	disp := dispatcher.New(reg, cb, bh, cfg)
 
-	var verifier *auth.Verifier
-	if jwtSecret != "" {
-		verifier = auth.NewVerifier(jwtSecret)
+	// Device tokens are resolved via Identity's /internal/introspect, guarded by
+	// the shared PLUGIN_API_KEY. Without it auth is disabled (dev only).
+	var introspector *auth.Introspector
+	if pluginAPIKey != "" {
+		introspector = auth.NewIntrospector(reg, pluginAPIKey)
 	} else {
-		log.Println("[warn] JWT_SECRET not set — auth middleware disabled")
+		log.Println("[warn] PLUGIN_API_KEY not set — auth middleware disabled")
 	}
 
-	var denylist *auth.Denylist
-	if redisURL != "" {
-		var err error
-		denylist, err = auth.NewDenylist(redisURL)
-		if err != nil {
-			log.Fatalf("redis denylist: %v", err)
-		}
-		log.Printf("[core] logout denylist enabled (redis)")
-	}
-
-	signerSecret := jwtSecret
-	if signerSecret == "" {
-		signerSecret = pluginAPIKey // fallback for dev
-	}
-	cpHandlers := controlplane.New(reg, disp, injector, pluginAPIKey, allowlist, signerSecret)
-	httpSrv := server.NewHTTP(reg, disp, injector, verifier, denylist, cpHandlers, httpAddr)
+	cpHandlers := controlplane.New(reg, disp, injector, pluginAPIKey, allowlist, pluginAPIKey)
+	httpSrv := server.NewHTTP(reg, disp, injector, introspector, cpHandlers, httpAddr)
 
 	healthMon := protection.NewHealthMonitor(reg, cb, cfg.HealthInterval)
 

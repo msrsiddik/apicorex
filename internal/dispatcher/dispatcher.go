@@ -197,25 +197,26 @@ func patternMatch(pattern, path string) bool {
 	return true
 }
 
-// IsPublic returns true if the matched route is public (no JWT required).
+// IsPublic returns true if the matched route is public (no token required).
 func (d *Dispatcher) IsPublic(method, path string) bool {
 	entry := d.match(method, path)
 	return entry != nil && entry.public
 }
 
-// authorized reports whether claims satisfy entry's declared permission: either
-// the permission itself (wildcards honored) or platform_admin, since platform
+// authorized reports whether the resolved identity (the ACTING user, fresh
+// from introspection) satisfies entry's declared permission: either the
+// permission itself (wildcards honored) or platform_admin, since platform
 // admins act across tenants by design and may hold no tenant role — and thus no
 // tenant-scoped permissions — at all. Callers only invoke this when
 // entry.permission != "" (an empty permission means "any authenticated user").
-func authorized(claims *auth.Claims, entry *routeEntry) bool {
-	if claims == nil {
+func authorized(id *auth.Identity, entry *routeEntry) bool {
+	if id == nil {
 		return false
 	}
-	if claims.UserType == "platform_admin" {
+	if id.UserType == "platform_admin" {
 		return true
 	}
-	return middleware.PermissionAllowed(claims.Permissions, entry.permission)
+	return middleware.PermissionAllowed(id.Permissions, entry.permission)
 }
 
 // Dispatch is the Gin catch-all handler. It matches the request to a plugin,
@@ -250,7 +251,7 @@ func (d *Dispatcher) Dispatch(c *gin.Context) {
 	// Authorization: a non-public route declaring a permission requires the
 	// caller's verified claims to satisfy it. Auth middleware has already run,
 	// so claims are present for protected routes.
-	if !entry.public && entry.permission != "" && !authorized(middleware.ClaimsFrom(c), entry) {
+	if !entry.public && entry.permission != "" && !authorized(middleware.IdentityFrom(c), entry) {
 		protection.RequestsRejected.WithLabelValues(plugin, "forbidden").Inc()
 		c.JSON(http.StatusForbidden, gin.H{"error": "missing permission: " + entry.permission})
 		return
