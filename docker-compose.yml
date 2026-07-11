@@ -1,20 +1,15 @@
-# ApiCoreX — all-in-one stack.
+# ApiCoreX — Core + shared infrastructure (Postgres, Redis).
 #
-# Brings up the stateless Core plus shared infrastructure (Postgres, Redis).
-# The plugin services (identity, sync) are COMMENTED OUT by default so this
-# file runs Core on its own. Uncomment them to run the full stack from a single
-# compose file — this assumes the plugin repos are cloned as siblings:
-#
-#   GolandProjects/
-#   ├── apicorex/            (this repo — run compose here)
-#   ├── apicorex-identity/
-#   └── apicorex-sync/
+# This Postgres instance is the SHARED database for the whole stack — every
+# plugin (identity, sync, zumo-pos, …) connects here, since they read/write
+# per-tenant schemas in the same DB. It's exposed on the host as 55432 (not
+# the default 5432) so it doesn't collide with a local Postgres. Each plugin
+# repo has its own standalone docker-compose.yml that points DATABASE_URL at
+# this same shared instance — run this compose file first, then run each
+# plugin repo's compose file on its own.
 #
 # Usage:
-#   docker compose up --build          # Core + Postgres + Redis
-#   # …then uncomment identity/sync below for the full stack.
-#
-# Each plugin repo also has its own standalone docker-compose.yml.
+#   docker compose up --build
 #
 services:
   postgres:
@@ -24,7 +19,7 @@ services:
       POSTGRES_PASSWORD: apicorex
       POSTGRES_DB: apicorex
     ports:
-      - "5432:5432"
+      - "55432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -56,44 +51,6 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-
-  # ── Plugins (uncomment for the full stack) ─────────────────────────────────
-  # These build from the sibling repos. The shared values (JWT_SECRET,
-  # PLUGIN_API_KEY) MUST match Core's above.
-  #
-  # identity:
-  #   build: ../apicorex-identity
-  #   environment:
-  #     DATABASE_URL: postgres://apicorex:apicorex@postgres:5432/apicorex?sslmode=disable
-  #     JWT_SECRET: change-me-to-a-long-random-secret
-  #     PLUGIN_API_KEY: change-me-plugin-key
-  #     CORE_URL: http://core:8080
-  #     PLUGIN_ADDR: ":50051"
-  #     PLUGIN_BASE_URL: http://identity:50051
-  #     REDIS_URL: redis://redis:6379/0
-  #   ports:
-  #     - "50051:50051"
-  #   depends_on:
-  #     postgres:
-  #       condition: service_healthy
-  #     core:
-  #       condition: service_started
-  #
-  # sync:
-  #   build: ../apicorex-sync
-  #   environment:
-  #     DATABASE_URL: postgres://apicorex:apicorex@postgres:5432/apicorex?sslmode=disable
-  #     PLUGIN_API_KEY: change-me-plugin-key
-  #     CORE_URL: http://core:8080
-  #     PLUGIN_ADDR: ":50052"
-  #     PLUGIN_BASE_URL: http://sync:50052
-  #   ports:
-  #     - "50052:50052"
-  #   depends_on:
-  #     postgres:
-  #       condition: service_healthy
-  #     core:
-  #       condition: service_started
 
 volumes:
   pgdata:
