@@ -8,8 +8,7 @@ pipeline {
     }
 
     environment {
-        GOFLAGS   = '-mod=mod'
-        IMAGE_TAG = "apicorex:${env.BUILD_NUMBER}"
+        GOFLAGS = '-mod=mod'
     }
 
     stages {
@@ -31,9 +30,11 @@ pipeline {
             }
         }
 
-        stage('Docker Image') {
+        stage('Deploy') {
+            // Builds the image and (re)starts the container via compose, which
+            // also owns the shared Postgres + Redis every plugin depends on.
             steps {
-                sh "docker build -t ${IMAGE_TAG} -t apicorex:latest ."
+                sh 'docker compose up -d --build'
             }
         }
     }
