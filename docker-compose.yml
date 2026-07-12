@@ -2,7 +2,7 @@
 #
 # This Postgres instance is the SHARED database for the whole stack — every
 # plugin (identity, sync, zumo-pos, …) connects here, since they read/write
-# per-tenant schemas in the same DB. It's exposed on the host as 55432 (not
+# per-tenant schemas in the same DB. It's exposed on the host as 15432 (not
 # the default 5432) so it doesn't collide with a local Postgres. Each plugin
 # repo has its own standalone docker-compose.yml that points DATABASE_URL at
 # this same shared instance — run this compose file first, then run each
@@ -20,7 +20,7 @@ services:
       POSTGRES_PASSWORD: apicorex
       POSTGRES_DB: apicorex
     ports:
-      - "55432:5432"
+      - "15432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -33,7 +33,7 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     ports:
-      - "66379:6379"
+      - "16379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
