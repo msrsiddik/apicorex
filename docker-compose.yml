@@ -14,6 +14,7 @@
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: apicorex
       POSTGRES_PASSWORD: apicorex
@@ -30,8 +31,9 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "66379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -40,14 +42,15 @@ services:
 
   core:
     build: .
+    restart: unless-stopped
     environment:
-      HTTP_PORT: ":8080"
+      HTTP_PORT: ":9999"
       JWT_SECRET: change-me-to-a-long-random-secret
       PLUGIN_API_KEY: change-me-plugin-key
       REDIS_URL: redis://redis:6379/0
       # PLUGIN_ALLOWLIST: identity,sync
     ports:
-      - "8080:8080"
+      - "9999:9999"
     depends_on:
       redis:
         condition: service_healthy
