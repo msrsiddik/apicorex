@@ -1,12 +1,13 @@
-# ApiCoreX — Core + shared infrastructure (Postgres, Redis).
+# ApiCoreX — Core + shared Postgres for the plugins.
 #
-# This Postgres instance is the SHARED database for the whole stack — every
-# plugin (identity, sync, zumo-pos, …) connects here, since they read/write
-# per-tenant schemas in the same DB. It's exposed on the host as 15432 (not
-# the default 5432) so it doesn't collide with a local Postgres. Each plugin
-# repo has its own standalone docker-compose.yml that points DATABASE_URL at
-# this same shared instance — run this compose file first, then run each
-# plugin repo's compose file on its own.
+# Core itself has no database (it's a stateless gateway) — this Postgres
+# instance is the SHARED database for the plugins: every plugin (identity,
+# sync, zumo-pos, …) connects here, since they read/write per-tenant schemas
+# in the same DB. It's exposed on the host as 15432 (not the default 5432) so
+# it doesn't collide with a local Postgres. Each plugin repo has its own
+# standalone docker-compose.yml that points DATABASE_URL at this same shared
+# instance — run this compose file first, then run each plugin repo's compose
+# file on its own.
 #
 # Usage:
 #   docker compose up --build
@@ -29,31 +30,15 @@ services:
       timeout: 3s
       retries: 10
 
-  redis:
-    image: redis:7-alpine
-    restart: unless-stopped
-    ports:
-      - "16379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-
   core:
     build: .
     restart: unless-stopped
     environment:
       HTTP_PORT: ":9999"
-      JWT_SECRET: change-me-to-a-long-random-secret
       PLUGIN_API_KEY: change-me-plugin-key
-      REDIS_URL: redis://redis:6379/0
       # PLUGIN_ALLOWLIST: identity,sync
     ports:
       - "9999:9999"
-    depends_on:
-      redis:
-        condition: service_healthy
 
 volumes:
   pgdata:
