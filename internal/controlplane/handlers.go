@@ -4,6 +4,7 @@
 package controlplane
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -21,19 +22,24 @@ import (
 )
 
 type Handlers struct {
-	reg       *registry.Registry
-	disp      *dispatcher.Dispatcher
-	injector  *openapi.Injector
-	apiKey    string
-	allowlist map[string]bool // empty = allow any (dev)
-	signer    *tokenSigner
-	client    *http.Client
+	reg           *registry.Registry
+	disp          *dispatcher.Dispatcher
+	injector      *openapi.Injector
+	apiKey        string
+	allowlist     map[string]bool // empty = allow any (dev)
+	signer        *tokenSigner
+	dashSecret    string
+	sessionSigner *tokenSigner
+	client        *http.Client
 }
 
 // New builds the control-plane handlers. allowlist is the set of plugin names
 // permitted to register (empty slice = allow any, for dev). The signer secret
-// should be a strong secret (reuse JWT_SECRET or a dedicated one).
-func New(reg *registry.Registry, disp *dispatcher.Dispatcher, injector *openapi.Injector, apiKey string, allowlist []string, signerSecret string) *Handlers {
+// should be a strong secret (reuse JWT_SECRET or a dedicated one). dashSecret
+// gates the gateway dashboard's login (a single shared key, not a
+// username/password pair) — empty means login is disabled (dev only),
+// matching the rest of Core's dev-mode posture.
+func New(reg *registry.Registry, disp *dispatcher.Dispatcher, injector *openapi.Injector, apiKey string, allowlist []string, signerSecret, dashSecret string) *Handlers {
 	al := make(map[string]bool, len(allowlist))
 	for _, n := range allowlist {
 		if n = strings.TrimSpace(n); n != "" {
@@ -41,13 +47,22 @@ func New(reg *registry.Registry, disp *dispatcher.Dispatcher, injector *openapi.
 		}
 	}
 	return &Handlers{
-		reg:       reg,
-		disp:      disp,
-		injector:  injector,
-		apiKey:    apiKey,
-		allowlist: al,
-		signer:    newTokenSigner(signerSecret, 24*time.Hour),
-		client:    &http.Client{Timeout: 10 * time.Second},
+		reg:        reg,
+		disp:       disp,
+		injector:   injector,
+		apiKey:     apiKey,
+		allowlist:  al,
+		signer:     newTokenSigner(signerSecret, 24*time.Hour),
+		dashSecret: dashSecret,
+		// Derived from dashSecret, not signerSecret: the two are independent
+		// env vars (PLUGIN_API_KEY vs DASHBOARD_SECRET), and PLUGIN_API_KEY may
+		// be unset in dev. If it were reused here, an unset PLUGIN_API_KEY would
+		// make the HMAC key a fixed, source-visible string (":dashboard"),
+		// letting anyone forge session tokens even with DASHBOARD_SECRET set.
+		// When dashSecret is itself empty, requireSession no-ops regardless of
+		// signature validity, so a weak/guessable key here is harmless.
+		sessionSigner: newTokenSigner(dashSecret+":session", 12*time.Hour),
+		client:        &http.Client{Timeout: 10 * time.Second},
 	}
 }
 
@@ -58,6 +73,149 @@ func (h *Handlers) Mount(engine *gin.Engine) {
 	g.POST("/heartbeat", h.heartbeat)
 	g.POST("/deregister", h.deregister)
 	g.GET("/plugins/:name/manifest", h.pluginManifest)
+
+	// dashboard login — unauthenticated by definition (this is where a session
+	// starts). /login-required lets the frontend know whether to show a login
+	// form at all (dev instances with no DASHBOARD_SECRET set skip it).
+	g.GET("/admin/login-required", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"required": h.dashSecret != ""})
+	})
+	g.POST("/admin/login", h.login)
+	g.POST("/admin/logout", h.logout)
+
+	// operator actions from the gateway dashboard — gated by a session token
+	// from /admin/login. Login disabled (dashSecret == "") means these are
+	// open, matching the rest of Core's dev-mode posture.
+	admin := g.Group("/admin", h.requireSession)
+	admin.GET("/session", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+	admin.POST("/plugins/:id/reset-breaker", h.resetBreaker)
+	admin.POST("/plugins/:id/deregister", h.adminDeregister)
+}
+
+// sessionCookieName is set on login alongside the returned Bearer token: the
+// dashboard SPA uses the token (via localStorage + Authorization header) for
+// its own /admin/* calls, while the cookie lets browser-navigated pages like
+// /docs (and Scalar's same-origin fetch of /docs/openapi.json) authenticate
+// without any custom header.
+const sessionCookieName = "apicorex_session"
+
+// login validates the dashboard secret key against DASHBOARD_SECRET and
+// issues a signed session token.
+func (h *Handlers) login(c *gin.Context) {
+	var req struct {
+		Key string `json:"key"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		return
+	}
+	if h.dashSecret == "" {
+		// login disabled (dev) — issue a token anyway so the frontend flow works
+		token := h.sessionSigner.issue("dev")
+		h.setSessionCookie(c, token)
+		c.JSON(http.StatusOK, gin.H{"token": token})
+		return
+	}
+	if subtle.ConstantTimeCompare([]byte(req.Key), []byte(h.dashSecret)) != 1 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid key"})
+		return
+	}
+	log.Printf("[controlplane] dashboard: login")
+	token := h.sessionSigner.issue("dashboard")
+	h.setSessionCookie(c, token)
+	c.JSON(http.StatusOK, gin.H{"token": token})
+}
+
+// logout clears the session cookie so a dashboard logout also revokes /docs
+// access (the session token in localStorage is discarded client-side; this
+// only needs to handle the cookie half of the session).
+func (h *Handlers) logout(c *gin.Context) {
+	secure := c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https"
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie(sessionCookieName, "", -1, "/", "", secure, true)
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// setSessionCookie sets the signed session token as an HttpOnly cookie, matching
+// the sessionSigner's TTL. Secure is set whenever the request itself arrived over
+// TLS or behind a TLS-terminating proxy (X-Forwarded-Proto), so it also works in
+// typical reverse-proxy deployments without forcing plain-HTTP dev setups to fail.
+func (h *Handlers) setSessionCookie(c *gin.Context, token string) {
+	secure := c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https"
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie(sessionCookieName, token, int((12 * time.Hour).Seconds()), "/", "", secure, true)
+}
+
+// RequireDashboardSession gates browser-navigated dashboard-only pages (like
+// /docs) on the session cookie set at login. Unlike requireSession (used by
+// /admin/* API calls), it reads the cookie rather than an Authorization
+// header, since these are pages the browser navigates to or fetches
+// same-origin rather than an API client attaching its own headers.
+func (h *Handlers) RequireDashboardSession(c *gin.Context) {
+	if h.dashSecret == "" {
+		c.Next()
+		return
+	}
+	token, err := c.Cookie(sessionCookieName)
+	if err != nil || token == "" {
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "login required — visit /dashboard to sign in"})
+		return
+	}
+	if _, err := h.sessionSigner.verify(token); err != nil {
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid or expired session"})
+		return
+	}
+	c.Next()
+}
+
+// requireSession checks the Bearer session token from /admin/login.
+func (h *Handlers) requireSession(c *gin.Context) {
+	if h.dashSecret == "" {
+		c.Next()
+		return
+	}
+	authz := c.GetHeader("Authorization")
+	token := strings.TrimPrefix(authz, "Bearer ")
+	if token == "" || token == authz {
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing session token"})
+		return
+	}
+	if _, err := h.sessionSigner.verify(token); err != nil {
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid or expired session"})
+		return
+	}
+	c.Next()
+}
+
+// resetBreaker manually closes a plugin's circuit breaker (operator action).
+func (h *Handlers) resetBreaker(c *gin.Context) {
+	pluginID := c.Param("id")
+	if _, ok := h.reg.Get(pluginID); !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "plugin not found"})
+		return
+	}
+	h.disp.ResetCircuitBreaker(pluginID)
+	log.Printf("[controlplane] dashboard: circuit breaker reset for %s", pluginID)
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// adminDeregister force-removes a plugin from the registry (operator action —
+// unlike deregister, it needs no plugin token, since the plugin itself may be
+// unreachable, which is often exactly why an operator is doing this).
+func (h *Handlers) adminDeregister(c *gin.Context) {
+	pluginID := c.Param("id")
+	entry, ok := h.reg.Get(pluginID)
+	if !ok {
+		c.JSON(http.StatusOK, gin.H{"success": false})
+		return
+	}
+	name := entry.Info.PluginName
+	h.reg.Deregister(pluginID)
+	h.disp.RemoveRoutes(pluginID)
+	h.injector.RemoveRoutes(name)
+	protection.PluginsRegistered.Set(float64(len(h.reg.List())))
+	log.Printf("[controlplane] dashboard: force-deregistered %s (%s)", name, pluginID)
+	c.JSON(http.StatusOK, gin.H{"success": true})
 }
 
 type registerReq struct {

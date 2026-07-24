@@ -45,3 +45,16 @@ func (b *Bulkhead) Release(pluginID string) {
 		b.active[pluginID]--
 	}
 }
+
+// Active returns the current in-flight request count for a plugin. Used by
+// the gateway dashboard.
+func (b *Bulkhead) Active(pluginID string) int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.active[pluginID]
+}
+
+// Max returns the configured per-plugin concurrency limit.
+func (b *Bulkhead) Max() int {
+	return b.maxConc
+}

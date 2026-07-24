@@ -22,8 +22,13 @@
 
 - [ ] **Audit logging** for Identity's admin actions (role change, tenant
       suspend/activate, plugin install/reconcile, grant/revoke platform_admin).
-      Trigger: before shipping any Core dashboard *write* feature, or once more
-      than one person operates the platform admin console.
+      Trigger: once more than one person operates the platform admin console.
+      (The other trigger — shipping a Core dashboard write feature — has now
+      happened: Core's dashboard got `log.Printf`-based audit lines for its two
+      write actions, reset-breaker and force-deregister, in
+      `internal/controlplane/handlers.go`. That's a reasonable minimum since
+      Core has no database by design; this item is about Identity's
+      Postgres-backed actions specifically and is still open.)
 - [ ] **Schema migration backfill** for `tenant_users` NOT NULL columns
       (`branch_id`, `role_id`) instead of relying on `scripts/reset-db.sql`.
       Trigger: the moment there's a real production database with data that
@@ -33,11 +38,25 @@
       into a tenant-custom-role or plugin-scoped permission mechanism.
       Trigger: when a first real domain plugin (POS/sales) actually exists in
       this ecosystem — right now it's a smell, not a bug.
-- [ ] **Narrow, read-only Core dashboard** (plugin registry, route table,
-      breaker/bulkhead state) — see `apicorex-core-dashboard-analysis.md` for
-      full spec if picked up. Trigger: manual ops (breaker resets, checking
-      plugin health) becomes a recurring need beyond `/plugins` + `/metrics` +
-      Grafana.
+- [ ] **Core dashboard: optional per-plugin console link** (e.g. an "Open
+      console" button next to Identity in the Plugins panel, deep-linking to
+      its `/console` admin UI instead of duplicating it). Needs a new
+      `console_path` (or similar) field on `manifest.Manifest`, added in
+      *both* `apicorex/internal/manifest/manifest.go` and
+      `apicorex-identity`'s manifest struct/registration payload — a
+      cross-repo change, not Core-only. Deferred 2026-07-24: the generic
+      Plugins panel already shows every registered plugin's health
+      (Identity included), which was the actual point of the dashboard's
+      "Phase 4 / connected services" idea — this is just the remaining
+      nice-to-have (a direct link out), not blocking. Revisit when actually
+      wanted.
+- [x] ~~**Narrow, read-only Core dashboard** (plugin registry, route table,
+      breaker/bulkhead state)~~ — built 2026-07-24 at `cmd/apicorex/admin`
+      (embedded Next.js SPA under `/dashboard`, same stack as Identity's
+      console). Phase 1: plugin/route overview + heartbeat freshness. Phase 2:
+      per-plugin circuit breaker/bulkhead/rate-limiter state + a parsed
+      `/metrics` traffic snapshot. Phase 3: two gated write actions
+      (reset-breaker, force-deregister) behind `X-Api-Key` (`PLUGIN_API_KEY`).
 
 ## Skip / explicitly deferred (premature at this stage)
 

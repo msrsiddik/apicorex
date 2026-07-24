@@ -79,6 +79,17 @@ func (cb *CircuitBreaker) RecordFailure(pluginID string) {
 	}
 }
 
+// Reset manually closes the breaker and clears its failure count (an operator
+// action from the gateway dashboard). If the plugin is still actually failing,
+// the next failed request re-opens it as usual — this just gives it another
+// chance immediately instead of waiting out resetTimeout.
+func (cb *CircuitBreaker) Reset(pluginID string) {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+	cb.failures[pluginID] = 0
+	cb.states[pluginID] = stateClosed
+}
+
 // ForceOpen trips the breaker immediately (used by the health monitor).
 func (cb *CircuitBreaker) ForceOpen(pluginID string) {
 	cb.mu.Lock()
@@ -106,5 +117,20 @@ func (cb *CircuitBreaker) StateMetric(pluginID string) float64 {
 		return 1
 	default:
 		return 0
+	}
+}
+
+// State returns a human-readable breaker state for pluginID: "closed",
+// "half-open", or "open". Used by the gateway dashboard.
+func (cb *CircuitBreaker) State(pluginID string) string {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+	switch cb.states[pluginID] {
+	case stateOpen:
+		return "open"
+	case stateHalfOpen:
+		return "half-open"
+	default:
+		return "closed"
 	}
 }

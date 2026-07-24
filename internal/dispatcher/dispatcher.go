@@ -130,6 +130,41 @@ func (d *Dispatcher) AddRoutes(pluginID, pluginName, pluginType string, routes [
 	d.pluginRL[pluginID] = protection.NewRateLimiter(rate, burst)
 }
 
+// ProtectionStatus is a per-plugin snapshot of the protection layers'
+// current state, for the gateway dashboard.
+type ProtectionStatus struct {
+	CircuitState   string  `json:"circuit_state"`
+	BulkheadActive int     `json:"bulkhead_active"`
+	BulkheadMax    int     `json:"bulkhead_max"`
+	RateTokens     float64 `json:"rate_tokens"`
+	RateBurst      float64 `json:"rate_burst"`
+}
+
+// ProtectionStatus returns the current circuit breaker, bulkhead, and rate
+// limiter state for a plugin.
+func (d *Dispatcher) ProtectionStatus(pluginID string) ProtectionStatus {
+	d.mu.RLock()
+	rl := d.pluginRL[pluginID]
+	d.mu.RUnlock()
+
+	ps := ProtectionStatus{
+		CircuitState:   d.cb.State(pluginID),
+		BulkheadActive: d.bh.Active(pluginID),
+		BulkheadMax:    d.bh.Max(),
+	}
+	if rl != nil {
+		ps.RateTokens = rl.Tokens(pluginID)
+		ps.RateBurst = rl.Burst()
+	}
+	return ps
+}
+
+// ResetCircuitBreaker manually closes a plugin's circuit breaker — an operator
+// action from the gateway dashboard.
+func (d *Dispatcher) ResetCircuitBreaker(pluginID string) {
+	d.cb.Reset(pluginID)
+}
+
 // RemoveRoutes drops all routes and the rate limiter for a plugin (called on
 // deregister).
 func (d *Dispatcher) RemoveRoutes(pluginID string) {

@@ -29,6 +29,7 @@ func main() {
 	httpAddr := envOr("HTTP_PORT", ":8080")
 	pluginAPIKey := envOr("PLUGIN_API_KEY", "")
 	allowlist := splitCSV(envOr("PLUGIN_ALLOWLIST", "")) // empty = allow any (dev)
+	dashboardSecret := envOr("DASHBOARD_SECRET", "")     // empty = dashboard login disabled (dev)
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -61,8 +62,11 @@ func main() {
 		log.Println("[warn] PLUGIN_API_KEY not set — auth middleware disabled")
 	}
 
-	cpHandlers := controlplane.New(reg, disp, injector, pluginAPIKey, allowlist, pluginAPIKey)
-	httpSrv := server.NewHTTP(reg, disp, injector, introspector, cpHandlers, httpAddr)
+	if dashboardSecret == "" {
+		log.Println("[warn] DASHBOARD_SECRET not set — gateway dashboard login disabled")
+	}
+	cpHandlers := controlplane.New(reg, disp, injector, pluginAPIKey, allowlist, pluginAPIKey, dashboardSecret)
+	httpSrv := server.NewHTTP(reg, disp, injector, introspector, cpHandlers, serveDashboard, httpAddr)
 
 	healthMon := protection.NewHealthMonitor(reg, cb, cfg.HealthInterval)
 

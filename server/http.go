@@ -1,7 +1,8 @@
 // Package server wires Core's single HTTP server: the control-plane endpoints
-// (/_core/*), the docs (Scalar UI + merged OpenAPI), /health, /plugins,
-// /metrics, the auth + tenant-header middleware chain, and the catch-all
-// dispatcher that proxies everything else to plugins.
+// (/_core/*), the docs (Scalar UI + merged OpenAPI), the embedded gateway
+// dashboard (/dashboard), /health, /plugins, /metrics, the auth + tenant-header
+// middleware chain, and the catch-all dispatcher that proxies everything else
+// to plugins.
 package server
 
 import (
@@ -41,6 +42,7 @@ func NewHTTP(
 	injector *openapi.Injector,
 	introspector *auth.Introspector,
 	cpHandlers *controlplane.Handlers,
+	dashboardHandler gin.HandlerFunc,
 	addr string,
 ) *HTTPServer {
 	gin.SetMode(gin.ReleaseMode)
@@ -79,19 +81,31 @@ func NewHTTP(
 		entries := reg.List()
 		out := make([]gin.H, 0, len(entries))
 		for _, e := range entries {
+			ps := disp.ProtectionStatus(e.Info.PluginID)
 			out = append(out, gin.H{
-				"plugin_id":   e.Info.PluginID,
-				"plugin_name": e.Info.PluginName,
-				"version":     e.Info.Version,
-				"status":      e.Info.Status,
-				"routes":      e.Info.Routes,
+				"plugin_id":       e.Info.PluginID,
+				"plugin_name":     e.Info.PluginName,
+				"version":         e.Info.Version,
+				"base_url":        e.Info.BaseURL,
+				"status":          e.Info.Status,
+				"alive":           e.Alive,
+				"registered_at":   e.RegisteredAt,
+				"last_heartbeat":  e.LastHeartbeat,
+				"routes":          e.Manifest.Routes,
+				"circuit_state":   ps.CircuitState,
+				"bulkhead_active": ps.BulkheadActive,
+				"bulkhead_max":    ps.BulkheadMax,
+				"rate_tokens":     ps.RateTokens,
+				"rate_burst":      ps.RateBurst,
 			})
 		}
 		c.JSON(http.StatusOK, out)
 	}).With(option.Summary("List registered plugins"), option.Tags("core"))
 
-	// merged OpenAPI spec — Core base spec + all registered plugin specs
-	engine.GET("/docs/openapi.json", func(c *gin.Context) {
+	// merged OpenAPI spec — Core base spec + all registered plugin specs.
+	// Gated on the dashboard session cookie (see RequireDashboardSession): the
+	// spec exposes every plugin's routes and schemas, so it shouldn't be public.
+	engine.GET("/docs/openapi.json", cpHandlers.RequireDashboardSession, func(c *gin.Context) {
 		base, err := r.MarshalJSON()
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "spec generation failed"})
@@ -101,19 +115,30 @@ func NewHTTP(
 		c.Data(http.StatusOK, "application/json", merged)
 	})
 
-	// Scalar UI — reads from /docs/openapi.json which includes all plugin routes
-	engine.GET("/docs", func(c *gin.Context) {
+	// Scalar UI — reads from /docs/openapi.json which includes all plugin routes.
+	// Same session-cookie gate; log in via /dashboard first.
+	engine.GET("/docs", cpHandlers.RequireDashboardSession, func(c *gin.Context) {
 		c.Data(http.StatusOK, "text/html; charset=utf-8", scalarHTML("ApiCoreX", "/docs/openapi.json"))
 	})
+
+	// gateway dashboard — embedded Next.js SPA. The static assets are public;
+	// the SPA itself gates on DASHBOARD_SECRET via its own login screen, and
+	// its write actions are session-token gated (see controlplane admin routes).
+	if dashboardHandler != nil {
+		engine.GET("/dashboard/*filepath", dashboardHandler)
+	}
 
 	// strip any client-supplied X-ApiCoreX-* headers (anti-spoofing) on every request
 	engine.Use(middleware.StripSpoofedHeaders())
 
-	// auth middleware — skip core endpoints, control plane, and plugin public routes
+	// auth middleware (device-token bearer, for proxied plugin routes) — skip
+	// core endpoints, control plane, and plugin public routes. /docs is skipped
+	// here too since it isn't part of the proxied API; it has its own
+	// dashboard-session-cookie gate registered above (RequireDashboardSession).
 	authMiddleware := middleware.Auth(introspector)
 	engine.Use(func(c *gin.Context) {
 		p := c.Request.URL.Path
-		if p == "/health" || p == "/plugins" || p == "/metrics" || strings.HasPrefix(p, "/docs") || strings.HasPrefix(p, "/_core") {
+		if p == "/health" || p == "/plugins" || p == "/metrics" || strings.HasPrefix(p, "/docs") || strings.HasPrefix(p, "/_core") || strings.HasPrefix(p, "/dashboard") {
 			c.Next()
 			return
 		}

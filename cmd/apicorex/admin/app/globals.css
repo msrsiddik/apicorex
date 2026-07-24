@@ -1,0 +1,129 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* ──────────────────────────────────────────────────────────────────────
+   ApiCoreX Gateway Dashboard theme. Same palette as the Identity console
+   (cool slate neutrals, indigo accent, semantic ok/warn/danger) so the two
+   ops surfaces feel like one system. Dark is the primary surface.
+   ────────────────────────────────────────────────────────────────────── */
+:root {
+  --radius: 0.625rem;
+
+  --background: hsl(222 22% 97%);
+  --foreground: hsl(222 30% 12%);
+  --card: hsl(0 0% 100%);
+  --card-foreground: hsl(222 30% 12%);
+  --popover: hsl(0 0% 100%);
+  --popover-foreground: hsl(222 30% 12%);
+  --primary: hsl(228 74% 58%);
+  --primary-foreground: hsl(0 0% 100%);
+  --secondary: hsl(222 20% 94%);
+  --secondary-foreground: hsl(222 28% 20%);
+  --muted: hsl(222 20% 94%);
+  --muted-foreground: hsl(222 12% 46%);
+  --accent: hsl(228 60% 95%);
+  --accent-foreground: hsl(228 74% 42%);
+  --destructive: hsl(0 72% 51%);
+  --destructive-foreground: hsl(0 0% 100%);
+  --border: hsl(222 18% 89%);
+  --input: hsl(222 18% 89%);
+  --ring: hsl(228 74% 58%);
+
+  --ok: hsl(158 64% 40%);
+  --ok-foreground: hsl(158 70% 24%);
+  --ok-surface: hsl(158 55% 93%);
+  --warn: hsl(28 80% 45%);
+  --warn-foreground: hsl(28 82% 30%);
+  --warn-surface: hsl(30 80% 94%);
+  --danger: hsl(0 72% 51%);
+  --danger-surface: hsl(0 75% 96%);
+}
+
+.dark {
+  --background: hsl(222 30% 8%);
+  --foreground: hsl(214 20% 92%);
+  --card: hsl(222 26% 11%);
+  --card-foreground: hsl(214 20% 92%);
+  --popover: hsl(222 28% 12%);
+  --popover-foreground: hsl(214 20% 92%);
+  --primary: hsl(226 82% 68%);
+  --primary-foreground: hsl(226 60% 12%);
+  --secondary: hsl(222 20% 17%);
+  --secondary-foreground: hsl(214 18% 88%);
+  --muted: hsl(222 20% 16%);
+  --muted-foreground: hsl(218 12% 60%);
+  --accent: hsl(226 40% 20%);
+  --accent-foreground: hsl(226 82% 82%);
+  --destructive: hsl(0 66% 58%);
+  --destructive-foreground: hsl(0 0% 100%);
+  --border: hsl(222 18% 20%);
+  --input: hsl(222 18% 22%);
+  --ring: hsl(226 82% 68%);
+
+  --ok: hsl(158 60% 52%);
+  --ok-foreground: hsl(158 60% 72%);
+  --ok-surface: hsl(158 45% 15%);
+  --warn: hsl(30 85% 60%);
+  --warn-foreground: hsl(32 85% 70%);
+  --warn-surface: hsl(28 50% 16%);
+  --danger: hsl(0 70% 62%);
+  --danger-surface: hsl(0 45% 17%);
+}
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-ok: var(--ok);
+  --color-ok-foreground: var(--ok-foreground);
+  --color-ok-surface: var(--ok-surface);
+  --color-warn: var(--warn);
+  --color-warn-foreground: var(--warn-foreground);
+  --color-warn-surface: var(--warn-surface);
+  --color-danger: var(--danger);
+  --color-danger-surface: var(--danger-surface);
+
+  --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+}

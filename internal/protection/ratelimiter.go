@@ -55,3 +55,19 @@ func min(a, b float64) float64 {
 	}
 	return b
 }
+
+// Tokens returns the current token count for key without consuming one — a
+// read-only peek for the gateway dashboard.
+func (r *RateLimiter) Tokens(key string) float64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if t, ok := r.tokens[key]; ok {
+		return t
+	}
+	return r.burst
+}
+
+// Burst returns the configured burst capacity.
+func (r *RateLimiter) Burst() float64 {
+	return r.burst
+}

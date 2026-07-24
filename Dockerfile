@@ -1,5 +1,17 @@
 # syntax=docker/dockerfile:1
 
+# ── Dashboard build stage ──────────────────────────────────────────────────
+# Statically export the Next.js gateway dashboard to admin/out, which the Go
+# build below embeds into the binary (see cmd/apicorex/dashboard.go).
+FROM node:22-alpine AS dashboard
+WORKDIR /admin
+
+COPY cmd/apicorex/admin/package.json cmd/apicorex/admin/package-lock.json* ./
+RUN npm install
+
+COPY cmd/apicorex/admin/ ./
+RUN npm run build
+
 # ── Build stage ────────────────────────────────────────────────────────────
 FROM golang:1.25-alpine AS build
 WORKDIR /src
@@ -8,8 +20,11 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 
-# Build a static, stripped binary.
 COPY . .
+# Bring in the exported dashboard UI so //go:embed all:admin/out has content.
+COPY --from=dashboard /admin/out ./cmd/apicorex/admin/out
+
+# Build a static, stripped binary.
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
     -o /out/apicorex ./cmd/apicorex
 

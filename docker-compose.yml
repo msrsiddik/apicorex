@@ -36,6 +36,7 @@ services:
     environment:
       HTTP_PORT: ":9999"
       PLUGIN_API_KEY: change-me-plugin-key
+      DASHBOARD_SECRET: change-me-dashboard-key
       # PLUGIN_ALLOWLIST: identity,sync
     ports:
       - "9999:9999"
