@@ -1,6 +1,6 @@
 # ApiCoreX — Plugin Authoring Guide
 
-Eta diye **je kono language** (Go, Node, Python, Rust, Java...) e ApiCoreX plugin banano jay। Plugin holo ekta normal HTTP server। Core ekta reverse proxy — JWT verify kore, tenant context header e inject kore, request stream kore tomar plugin-e forward kore.
+Eta diye **je kono language** (Go, Node, Python, Rust, Java...) e ApiCoreX plugin banano jay। Plugin holo ekta normal HTTP server। Core ekta reverse proxy — bearer device token take Identity-r kache introspect kore verify kore, tenant context header e inject kore, request stream kore tomar plugin-e forward kore.
 
 **Kono SDK nai** — niche ja ache shudhu sei HTTP contract follow korlei chole. Je kono framework (Gin, Echo, Flask, Express, Spring...) ba stdlib HTTP server cholbe.
 
@@ -48,11 +48,11 @@ Core registration er por ei endpoint **pull** kore plugin ke jane. Eta return ko
 
 | Field | Mane |
 |-------|------|
-| `name` | Unique plugin name. JWT-er installed-plugin list ar route ownership e use hoy. |
+| `name` | Unique plugin name. Route ownership ar registry-e plugin identify korte use hoy. |
 | `version` | Plugin version (docs e dekhabe). |
 | `plugin_type` | `"internal"` (1000 req/s) ba `"public"` (100 req/s rate limit)। |
 | `routes[]` | Core ei route gulo-i proxy korbe. `:param` gin-style segment. |
-| `routes[].public` | `true` hole oi route-e Core JWT auth **skip** korbe. |
+| `routes[].public` | `true` hole oi route-e Core device-token auth **skip** korbe. |
 | `public_paths[]` | `routes[].public: true` er bikolpo — path list diye public mark kora. |
 | `openapi_spec` | (optional) Full OpenAPI 3 JSON object. Scalar UI te schema docs dekhanor jonno. Na dile route kaj korbe kintu docs e shudhu path dekhabe. |
 | `migrations[]` | (optional) Tenant-scoped DB migration. Identity plugin install er somoy protita tenant schema-e run kore. |
@@ -119,7 +119,7 @@ POST {CORE_URL}/_core/deregister
 
 ## Tenant context — injected headers
 
-Core JWT verify korar por **trusted headers** inject kore tomar plugin-e। Client ei header spoof korte parbe na — Core protita request-e client-supplied `X-ApiCoreX-*` strip kore, tarpor JWT theke real value boshay.
+Core device token resolve korar por (Identity-r `/internal/introspect` call kore) **trusted headers** inject kore tomar plugin-e। Client ei header spoof korte parbe na — Core protita request-e client-supplied `X-ApiCoreX-*` strip kore, tarpor introspection result theke real value boshay.
 
 | Header | Mane |
 |--------|------|
@@ -214,7 +214,7 @@ threading.Thread(target=register, daemon=True).start()
 app.run(port=6000)
 ```
 
-`python app.py` → Core-e register hoye jabe, `GET http://localhost:8080/invoices` (with valid JWT) → proxied to plugin with tenant headers.
+`python app.py` → Core-e register hoye jabe, `GET http://localhost:8080/invoices` (with a valid device token) → proxied to plugin with tenant headers.
 
 ---
 
@@ -301,7 +301,7 @@ public class Plugin {
 }
 ```
 
-`java Plugin.java` → Core-e register, `GET http://localhost:8080/invoices` (valid JWT soho) → proxied to Java plugin with tenant headers.
+`java Plugin.java` → Core-e register, `GET http://localhost:8080/invoices` (valid device token soho) → proxied to Java plugin with tenant headers.
 
 > Production-e Spring Boot / Quarkus use korle aro shoja — sei framework-er JSON serialization + HTTP client diye manifest serve + register koro. Contract eki: `/_apicorex/manifest`, `/_apicorex/health`, `POST /_core/register`।
 
@@ -384,7 +384,7 @@ func register() {
 }
 ```
 
-`go run main.go` → Core-e register, `GET http://localhost:8080/invoices` (valid JWT soho) → proxied with tenant headers. Streaming/upload/WebSocket native Gin diyei chole.
+`go run main.go` → Core-e register, `GET http://localhost:8080/invoices` (valid device token soho) → proxied with tenant headers. Streaming/upload/WebSocket native Gin diyei chole.
 
 > **OpenAPI docs:** Rich Scalar UI schema chaile manifest-er `openapi_spec` field-e ekta OpenAPI 3 JSON dao. Gin-e [oaswrap](https://github.com/oaswrap/spec) library use kore route theke auto-generate kora jay (reference: `apicorex-identity/internal/plugin/plugin.go` — Identity exactly eta kore)। Eta optional — na dile route list-i Scalar-e dekhabe.
 
