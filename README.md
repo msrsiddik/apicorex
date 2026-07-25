@@ -97,25 +97,26 @@ Open **http://localhost:8080/docs** for the Scalar UI (Core + all plugin routes)
 
 ### With Docker
 
-This repo's `docker-compose.yml` brings up Core + Postgres + Redis. The plugin
-services (`identity`, `sync`) are commented out by default — uncomment them to
-run the **full stack from a single file** (it builds them from sibling repos, so
-clone `apicorex-identity` and `apicorex-sync` next to this repo):
+This repo's `docker-compose.yml` brings up Core + a shared Postgres (the
+plugins' database — Core itself has no DB). Each plugin repo ships its own
+standalone `docker-compose.yml` that points at this same shared Postgres
+(exposed on the host at `15432`) and a running Core to register with:
 
 ```
 GolandProjects/
-├── apicorex/            ← run `docker compose up --build` here
-├── apicorex-identity/
-└── apicorex-sync/
+├── apicorex/            ← run `docker compose up --build` here first
+├── apicorex-identity/   ← then `docker compose up --build` here
+└── apicorex-sync/       ← and here
 ```
 
 ```bash
-docker compose up --build         # Core + Postgres + Redis
-# then uncomment identity/sync in docker-compose.yml for the full stack
+docker compose up --build         # Core + Postgres
+# in each plugin repo:
+docker compose up --build         # plugin + connects to the shared Postgres above
 ```
 
-Each plugin repo also ships its own standalone `docker-compose.yml` if you'd
-rather run them separately.
+Core listens on `:9999` in this compose stack (`HTTP_PORT` is overridden from
+the `:8080` binary default — see [Configuration](#configuration)).
 
 ---
 
@@ -153,6 +154,7 @@ All via environment variables (secrets never hardcoded):
 | `HTTP_PORT` | `:8080` | HTTP listen address |
 | `PLUGIN_API_KEY` | — | Shared key plugins present on register; also authenticates Core to Identity's `/internal/introspect` (unset disables auth — dev only) |
 | `PLUGIN_ALLOWLIST` | empty | Comma-separated plugin names allowed to register (empty = allow any, dev) |
+| `DASHBOARD_SECRET` | empty | Login key for the embedded gateway dashboard (`/dashboard`) and `/docs`; unset disables the login form (dev only — open access) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | empty | Enables OpenTelemetry tracing (e.g. Jaeger) |
 | `CONFIG_FILE` | empty | YAML for per-plugin rate/limit overrides — see [config.example.yaml](./config.example.yaml) |
 
@@ -167,11 +169,18 @@ globally via `RATE_PER_SEC`, `BULKHEAD_MAX`, `CB_THRESHOLD`, etc.
 |------|------|-------------|
 | `GET /health` | no | Liveness |
 | `GET /plugins` | no | Registered plugins |
-| `GET /docs` | no | Scalar UI |
-| `GET /docs/openapi.json` | no | Merged OpenAPI (Core + plugins) |
+| `GET /dashboard/*` | dashboard session | Embedded gateway dashboard (plugin registry, route table, breaker/bulkhead state, two gated operator actions) |
+| `GET /plugin` | dashboard session | Dashboard entry point (same SPA as `/dashboard`) |
+| `GET /docs` | dashboard session | Scalar UI — log in via `/dashboard` first |
+| `GET /docs/openapi.json` | dashboard session | Merged OpenAPI (Core + plugins) |
 | `GET /metrics` | no | Prometheus metrics |
-| `* /_core/*` | api key | Control plane (register/heartbeat/deregister) |
+| `* /_core/*` | api key (register/heartbeat) or dashboard session (`/_core/admin/*`) | Control plane (register/heartbeat/deregister, dashboard login + operator actions) |
 | everything else | device token* | Proxied to the owning plugin (*unless the route is public) |
+
+> `/docs` and the dashboard share one login: `POST /_core/admin/login` with
+> `DASHBOARD_SECRET` issues a signed session (cookie for browser navigation,
+> bearer token for the SPA's own API calls). Unset `DASHBOARD_SECRET` and both
+> are open — the default for local dev.
 
 ---
 

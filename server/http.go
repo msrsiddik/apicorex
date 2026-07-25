@@ -124,8 +124,12 @@ func NewHTTP(
 	// gateway dashboard — embedded Next.js SPA. The static assets are public;
 	// the SPA itself gates on DASHBOARD_SECRET via its own login screen, and
 	// its write actions are session-token gated (see controlplane admin routes).
+	// /plugin is the SPA's plugins-tab page, client-side-routed to its own URL
+	// (see admin/app/page.tsx) — it's the same index.html, just requested
+	// directly instead of via the /dashboard/*filepath wildcard.
 	if dashboardHandler != nil {
 		engine.GET("/dashboard/*filepath", dashboardHandler)
+		engine.GET("/plugin", dashboardHandler)
 	}
 
 	// strip any client-supplied X-ApiCoreX-* headers (anti-spoofing) on every request
@@ -138,7 +142,7 @@ func NewHTTP(
 	authMiddleware := middleware.Auth(introspector)
 	engine.Use(func(c *gin.Context) {
 		p := c.Request.URL.Path
-		if p == "/health" || p == "/plugins" || p == "/metrics" || strings.HasPrefix(p, "/docs") || strings.HasPrefix(p, "/_core") || strings.HasPrefix(p, "/dashboard") {
+		if p == "/health" || p == "/plugins" || p == "/plugin" || p == "/metrics" || strings.HasPrefix(p, "/docs") || strings.HasPrefix(p, "/_core") || strings.HasPrefix(p, "/dashboard") {
 			c.Next()
 			return
 		}

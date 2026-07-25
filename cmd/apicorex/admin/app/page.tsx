@@ -18,9 +18,34 @@ const POLL_MS = 10_000;
 
 type AuthState = "checking" | "authenticated" | "unauthenticated";
 
+// The dashboard is a statically exported SPA served under basePath
+// "/dashboard" (see cmd/apicorex/dashboard.go). /dashboard and / both render
+// this same overview page; /plugin is a second, explicit Go route serving
+// the identical index.html (its JS/CSS still load from /dashboard/_next/...,
+// since basePath only affects asset URLs, not this route) so the plugins tab
+// gets its own top-level URL instead of nesting under /dashboard.
+function sectionFromPath(pathname: string): SectionId {
+  return pathname.replace(/\/+$/, "") === "/plugin" ? "plugins" : "overview";
+}
+
 export default function Home() {
   const [auth, setAuth] = useState<AuthState>("checking");
-  const [section, setSection] = useState<SectionId>("overview");
+  const [section, setSectionState] = useState<SectionId>("overview");
+
+  useEffect(() => {
+    setSectionState(sectionFromPath(window.location.pathname));
+    const onPopState = () => setSectionState(sectionFromPath(window.location.pathname));
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
+  const setSection = useCallback((id: SectionId) => {
+    setSectionState(id);
+    const path = id === "overview" ? "/dashboard" : "/plugin";
+    if (window.location.pathname.replace(/\/+$/, "") !== path) {
+      window.history.pushState(null, "", path);
+    }
+  }, []);
   const [plugins, setPlugins] = useState<Plugin[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

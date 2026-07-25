@@ -9,6 +9,11 @@ bin/
 dist/
 *.exe
 
+# Dashboard UI: node deps and prior build output are rebuilt inside the image.
+cmd/apicorex/admin/node_modules/
+cmd/apicorex/admin/.next/
+cmd/apicorex/admin/out/
+
 # Editor / OS
 .idea/
 .vscode/
