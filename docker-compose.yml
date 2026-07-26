@@ -38,6 +38,22 @@ services:
       PLUGIN_API_KEY: change-me-plugin-key
       DASHBOARD_SECRET: change-me-dashboard-key
       # PLUGIN_ALLOWLIST: identity,sync
+      # Comma-separated origins allowed to call Core from a browser. Empty =
+      # no restriction (dev only).
+      CORS_ALLOWED_ORIGINS: ""
+      # OTLP endpoint (e.g. Jaeger/Tempo). Empty = tracing is a no-op.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ""
+      # Path to a YAML file of per-plugin protection-limit overrides (see
+      # config.example.yaml). Empty = use the env-var defaults below.
+      CONFIG_FILE: ""
+      # Global defaults for rate limiting, bulkheading, and the circuit
+      # breaker/timeout — overridden per-plugin by CONFIG_FILE if set.
+      RATE_PER_SEC: "1000"
+      BULKHEAD_MAX: "100"
+      CB_THRESHOLD: "5"
+      CB_RESET_TIMEOUT: "30s"
+      REQUEST_TIMEOUT: "30s"
+      HEALTH_INTERVAL: "30s"
     ports:
       - "9999:9999"
 
