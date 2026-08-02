@@ -34,10 +34,16 @@
       Trigger: the moment there's a real production database with data that
       can't be dropped. Already flagged honestly in Identity's README — not
       hidden debt.
-- [ ] **Move `sale:void`/`sale:refund` out of the generic RBAC seed catalog**
+- [x] **Move `sale:void`/`sale:refund` out of the generic RBAC seed catalog**
       into a tenant-custom-role or plugin-scoped permission mechanism.
       Trigger: when a first real domain plugin (POS/sales) actually exists in
-      this ecosystem — right now it's a smell, not a bug.
+      this ecosystem — right now it's a smell, not a bug. Resolved
+      2026-07-31: removed from `apicorex-identity-private`'s `Catalog` and
+      `admin`/`manager` `SystemRoles` (`internal/rbac/permissions.go`) —
+      confirmed zero consumers anywhere in the ecosystem before deleting.
+      care-pilot's own `invoice:refund`/`invoice:discount` (plugin-scoped,
+      declared via its own manifest/route registration) is the pattern the
+      generic mechanism was waiting to see used for real.
 - [ ] **Core dashboard: optional per-plugin console link** (e.g. an "Open
       console" button next to Identity in the Plugins panel, deep-linking to
       its `/console` admin UI instead of duplicating it). Needs a new
