@@ -1,5 +1,5 @@
 [build]
-  cmd = "go build -o ./tmp/apicorex ./cmd/apicorex/main.go"
+  cmd = "go build -o ./tmp/apicorex ./cmd/apicorex"
   entrypoint = "./tmp/apicorex"
   delay = 1000
   exclude_dir = ["tmp", "vendor"]
