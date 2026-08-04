@@ -6,6 +6,7 @@
 package dispatcher
 
 import (
+	"context"
 	"io"
 	"log"
 	"net"
@@ -55,6 +56,11 @@ type Dispatcher struct {
 	mu       sync.RWMutex
 	routes   []routeEntry
 	pluginRL map[string]*protection.RateLimiter
+	// tenantRL holds one RateLimiter per plugin for the per-tenant sub-limit
+	// (keyed by tenant ID inside it, via TenantRatePerSec/TenantRateBurst).
+	// Only plugins with a configured tenant rate get an entry — nil means
+	// "no per-tenant sub-limit for this plugin", the pre-Phase-4 behavior.
+	tenantRL map[string]*protection.RateLimiter
 }
 
 // New builds a Dispatcher. reg supplies plugin targets, cb and bh are the shared
@@ -67,6 +73,7 @@ func New(reg *registry.Registry, cb *protection.CircuitBreaker, bh *protection.B
 		bh:       bh,
 		cfg:      cfg,
 		pluginRL: make(map[string]*protection.RateLimiter),
+		tenantRL: make(map[string]*protection.RateLimiter),
 		transport: &http.Transport{
 			Proxy:                 http.ProxyFromEnvironment,
 			MaxIdleConns:          100,
@@ -128,6 +135,22 @@ func (d *Dispatcher) AddRoutes(pluginID, pluginName, pluginType string, routes [
 		}
 	}
 	d.pluginRL[pluginID] = protection.NewRateLimiter(rate, burst)
+
+	// Per-tenant sub-limit is opt-in per plugin (config's tenant_rate_per_sec).
+	// Public plugins get the same 1/10th scaling as their overall budget so
+	// the sub-limit never exceeds the parent limit it's meant to divide.
+	if limits.TenantRatePerSec > 0 {
+		tRate, tBurst := limits.TenantRatePerSec, limits.TenantRateBurst
+		if pluginType == "public" {
+			if _, overridden := d.cfg.Plugins[pluginName]; !overridden {
+				tRate = tRate / 10
+				tBurst = tBurst / 10
+			}
+		}
+		d.tenantRL[pluginID] = protection.NewRateLimiter(tRate, tBurst)
+	} else {
+		delete(d.tenantRL, pluginID)
+	}
 }
 
 // ProtectionStatus is a per-plugin snapshot of the protection layers'
@@ -165,6 +188,32 @@ func (d *Dispatcher) ResetCircuitBreaker(pluginID string) {
 	d.cb.Reset(pluginID)
 }
 
+// RunTenantLimiterSweep periodically evicts idle tenant entries from every
+// plugin's per-tenant rate limiter, so a gateway that's been up for a long
+// time doesn't accumulate an ever-growing map of tenants that stopped being
+// active. Intended to run as a goroutine for the process lifetime; returns
+// when ctx is done.
+func (d *Dispatcher) RunTenantLimiterSweep(ctx context.Context, interval, maxIdle time.Duration) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			d.mu.RLock()
+			limiters := make([]*protection.RateLimiter, 0, len(d.tenantRL))
+			for _, rl := range d.tenantRL {
+				limiters = append(limiters, rl)
+			}
+			d.mu.RUnlock()
+			for _, rl := range limiters {
+				rl.EvictIdle(maxIdle)
+			}
+		}
+	}
+}
+
 // RemoveRoutes drops all routes and the rate limiter for a plugin (called on
 // deregister).
 func (d *Dispatcher) RemoveRoutes(pluginID string) {
@@ -172,6 +221,7 @@ func (d *Dispatcher) RemoveRoutes(pluginID string) {
 	defer d.mu.Unlock()
 	d.removeRoutes(pluginID)
 	delete(d.pluginRL, pluginID)
+	delete(d.tenantRL, pluginID)
 }
 
 func (d *Dispatcher) removeRoutes(pluginID string) {
@@ -299,14 +349,29 @@ func (d *Dispatcher) Dispatch(c *gin.Context) {
 		return
 	}
 
-	// Layer 2: rate limiter
+	// Layer 2: rate limiter — plugin-wide budget, then (if configured) each
+	// tenant's own sub-limit within it. The plugin-wide check runs first so a
+	// plugin already at its overall budget rejects before spending any
+	// tenant-limiter bookkeeping.
 	d.mu.RLock()
 	rl := d.pluginRL[entry.pluginID]
+	trl := d.tenantRL[entry.pluginID]
 	d.mu.RUnlock()
 	if rl != nil && !rl.Allow(entry.pluginID) {
 		protection.RequestsRejected.WithLabelValues(plugin, "rate_limit").Inc()
 		c.JSON(http.StatusTooManyRequests, gin.H{"error": "rate limit exceeded"})
 		return
+	}
+	// Public routes carry no verified tenant identity — there's nothing to
+	// key a per-tenant limit on, so only protected routes get this layer.
+	if trl != nil {
+		if id := middleware.IdentityFrom(c); id != nil && id.TenantID != "" {
+			if !trl.Allow(entry.pluginID + ":" + id.TenantID) {
+				protection.RequestsRejected.WithLabelValues(plugin, "tenant_rate_limit").Inc()
+				c.JSON(http.StatusTooManyRequests, gin.H{"error": "rate limit exceeded for this shop"})
+				return
+			}
+		}
 	}
 
 	// Layer 3: bulkhead

@@ -13,12 +13,19 @@ import (
 
 // Limits holds the tunable protection knobs for a plugin (or the global default).
 type Limits struct {
-	RatePerSec     float64       `yaml:"rate_per_sec"`
-	RateBurst      float64       `yaml:"rate_burst"`
-	BulkheadMax    int           `yaml:"bulkhead_max"`
-	CBThreshold    int           `yaml:"cb_threshold"`
-	CBResetTimeout time.Duration `yaml:"cb_reset_timeout"`
-	RequestTimeout time.Duration `yaml:"request_timeout"`
+	RatePerSec float64 `yaml:"rate_per_sec"`
+	RateBurst  float64 `yaml:"rate_burst"`
+	// TenantRatePerSec/TenantRateBurst cap any ONE tenant's share of a
+	// plugin's overall rate budget (RatePerSec/RateBurst above), so one
+	// flooding tenant can't starve every other tenant on the same plugin.
+	// 0 = no per-tenant sub-limit (only the plugin-wide budget applies, the
+	// pre-Phase-4 behavior) — set explicitly to opt a plugin in.
+	TenantRatePerSec float64       `yaml:"tenant_rate_per_sec"`
+	TenantRateBurst  float64       `yaml:"tenant_rate_burst"`
+	BulkheadMax      int           `yaml:"bulkhead_max"`
+	CBThreshold      int           `yaml:"cb_threshold"`
+	CBResetTimeout   time.Duration `yaml:"cb_reset_timeout"`
+	RequestTimeout   time.Duration `yaml:"request_timeout"`
 }
 
 // Config is the full gateway config: a global default + per-plugin overrides.
@@ -99,6 +106,12 @@ func withDefaults(l, def Limits) Limits {
 	}
 	if l.RateBurst == 0 {
 		l.RateBurst = def.RateBurst
+	}
+	if l.TenantRatePerSec == 0 {
+		l.TenantRatePerSec = def.TenantRatePerSec
+	}
+	if l.TenantRateBurst == 0 {
+		l.TenantRateBurst = def.TenantRateBurst
 	}
 	if l.BulkheadMax == 0 {
 		l.BulkheadMax = def.BulkheadMax

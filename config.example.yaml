@@ -4,8 +4,13 @@
 
 # Global default applied to every plugin unless overridden below.
 default:
-  rate_per_sec: 1000       # requests/sec per plugin
+  rate_per_sec: 1000       # requests/sec per plugin (shared across all tenants)
   rate_burst: 1000         # token bucket burst
+  # Per-TENANT sub-limit within the plugin's overall budget above, so one
+  # flooding tenant can't starve every other tenant on the same plugin.
+  # 0 (the default) disables this — only the plugin-wide budget applies.
+  tenant_rate_per_sec: 0
+  tenant_rate_burst: 0
   bulkhead_max: 100        # max concurrent in-flight per plugin
   cb_threshold: 5          # failures before circuit opens
   cb_reset_timeout: 30s    # how long the breaker stays open
@@ -24,3 +29,9 @@ plugins:
   # webhooks:
   #   rate_per_sec: 50
   #   bulkhead_max: 20
+  # a plugin heavily shared across tenants (e.g. the POS API) can cap any
+  # one tenant's share so a busy shop never starves the others:
+  # pos:
+  #   rate_per_sec: 5000
+  #   tenant_rate_per_sec: 50
+  #   tenant_rate_burst: 100

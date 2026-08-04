@@ -81,6 +81,14 @@ func main() {
 		return nil
 	})
 	g.Go(func() error {
+		// 5min sweep / 30min idle cutoff: generous enough that no tenant's
+		// legitimate token bucket gets wiped mid-use, tight enough that a
+		// gateway with a long tail of one-time/inactive tenants doesn't grow
+		// its per-tenant rate-limiter maps unbounded.
+		disp.RunTenantLimiterSweep(gCtx, 5*time.Minute, 30*time.Minute)
+		return nil
+	})
+	g.Go(func() error {
 		<-gCtx.Done()
 		shutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()

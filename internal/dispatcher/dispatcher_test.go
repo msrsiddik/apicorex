@@ -134,3 +134,60 @@ func TestDispatcher_RemoveRoutes(t *testing.T) {
 		t.Error("route should be gone after RemoveRoutes")
 	}
 }
+
+// A plugin with no tenant_rate_per_sec configured gets no per-tenant
+// sub-limiter at all — the pre-Phase-4 behavior (only the plugin-wide budget
+// applies).
+func TestDispatcher_TenantRateLimit_OptOutByDefault(t *testing.T) {
+	d := newTestDispatcher() // config.Defaults() has TenantRatePerSec == 0
+	d.AddRoutes("id1", "pos", "internal", []manifest.Route{
+		{Method: "GET", Path: "/products", Public: false},
+	})
+	if _, ok := d.tenantRL["id1"]; ok {
+		t.Error("no tenant rate limiter should exist when tenant_rate_per_sec is unset")
+	}
+}
+
+// A plugin with tenant_rate_per_sec configured gets a per-tenant sub-limiter,
+// and it enforces the configured burst independently per tenant — one
+// tenant's requests never spend another tenant's tokens.
+func TestDispatcher_TenantRateLimit_PerTenantBudget(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Plugins["pos"] = config.Limits{TenantRatePerSec: 5, TenantRateBurst: 2}
+	d := New(registry.New(), protection.NewCircuitBreaker(5, 0), protection.NewBulkhead(10), cfg)
+	d.AddRoutes("id1", "pos", "internal", []manifest.Route{
+		{Method: "GET", Path: "/products", Public: false},
+	})
+
+	trl, ok := d.tenantRL["id1"]
+	if !ok {
+		t.Fatal("expected a tenant rate limiter for a plugin with tenant_rate_per_sec set")
+	}
+
+	// tenant A exhausts its burst of 2...
+	if !trl.Allow("id1:tenantA") || !trl.Allow("id1:tenantA") {
+		t.Fatal("tenant A should get its full burst")
+	}
+	if trl.Allow("id1:tenantA") {
+		t.Error("tenant A should be rate-limited after exhausting its burst")
+	}
+	// ...but tenant B, keyed separately, is untouched.
+	if !trl.Allow("id1:tenantB") {
+		t.Error("tenant B should have its own independent budget")
+	}
+}
+
+// RemoveRoutes also tears down the plugin's tenant limiter, if it had one.
+func TestDispatcher_RemoveRoutes_DropsTenantLimiter(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Plugins["pos"] = config.Limits{TenantRatePerSec: 5, TenantRateBurst: 2}
+	d := New(registry.New(), protection.NewCircuitBreaker(5, 0), protection.NewBulkhead(10), cfg)
+	d.AddRoutes("id1", "pos", "internal", []manifest.Route{
+		{Method: "GET", Path: "/products", Public: false},
+	})
+	d.RemoveRoutes("id1")
+
+	if _, ok := d.tenantRL["id1"]; ok {
+		t.Error("tenant rate limiter should be removed alongside routes")
+	}
+}

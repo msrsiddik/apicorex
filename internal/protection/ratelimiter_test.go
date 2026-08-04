@@ -46,3 +46,24 @@ func TestRateLimiter_PerKeyIsolation(t *testing.T) {
 		t.Fatal("p2 has its own bucket and should be allowed")
 	}
 }
+
+func TestRateLimiter_EvictIdle(t *testing.T) {
+	rl := NewRateLimiter(1, 1)
+	rl.Allow("stale")
+	time.Sleep(20 * time.Millisecond)
+	rl.Allow("fresh")
+
+	rl.EvictIdle(10 * time.Millisecond)
+
+	if _, ok := rl.lastSeen["stale"]; ok {
+		t.Error("stale key should have been evicted")
+	}
+	if _, ok := rl.lastSeen["fresh"]; !ok {
+		t.Error("fresh key should not have been evicted")
+	}
+	// an evicted key starts over with a full burst, exactly like one that
+	// was never seen before.
+	if !rl.Allow("stale") {
+		t.Error("evicted key should get a fresh burst on its next request")
+	}
+}

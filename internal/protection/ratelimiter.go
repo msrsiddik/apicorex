@@ -71,3 +71,20 @@ func (r *RateLimiter) Tokens(key string) float64 {
 func (r *RateLimiter) Burst() float64 {
 	return r.burst
 }
+
+// EvictIdle drops every key untouched for longer than maxIdle. A plugin-keyed
+// limiter (a handful of plugins) never needs this, but a tenant-keyed one
+// (Phase 4's per-tenant sub-limit — potentially thousands of tenants over a
+// gateway's lifetime, most later idle) would otherwise grow its maps forever.
+// Safe to call periodically from a background goroutine.
+func (r *RateLimiter) EvictIdle(maxIdle time.Duration) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	cutoff := time.Now().Add(-maxIdle)
+	for key, last := range r.lastSeen {
+		if last.Before(cutoff) {
+			delete(r.lastSeen, key)
+			delete(r.tokens, key)
+		}
+	}
+}
