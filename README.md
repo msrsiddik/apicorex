@@ -52,6 +52,8 @@ own repo with its own database, migrations, and lifecycle:
 |--------|------|--------------|
 | **Identity** | [apicorex-identity](https://github.com/msrsiddik/apicorex-identity) | Authentication, multi-tenant registration, device-token issuing, per-tenant plugin install/migrations |
 | **Sync** | [apicorex-sync](https://github.com/msrsiddik/apicorex-sync) | Offline-first data sync (push/pull, last-write-wins, tombstones) for any app |
+| **Zumo POS** | [zumo-pos](https://github.com/msrsiddik/zumo-pos) | POS domain plugin for offline-first point-of-sale (Bangladesh micro-business: grocery, pharmacy, cosmetics, clothing, hardware) |
+| **Medicine Catalog** | [medicine-catalog](https://github.com/msrsiddik/medicine-catalog) | Read-only Bangladesh medicine/drug catalog (shipped SQLite reference data) for pre-filling product-create forms |
 
 Want your own? A plugin is just an HTTP server in any language — see
 [PLUGIN_GUIDE.md](./PLUGIN_GUIDE.md).
@@ -155,11 +157,23 @@ All via environment variables (secrets never hardcoded):
 | `PLUGIN_API_KEY` | — | Shared key plugins present on register; also authenticates Core to Identity's `/internal/introspect` (unset disables auth — dev only) |
 | `PLUGIN_ALLOWLIST` | empty | Comma-separated plugin names allowed to register (empty = allow any, dev) |
 | `DASHBOARD_SECRET` | empty | Login key for the embedded gateway dashboard (`/dashboard`) and `/docs`; unset disables the login form (dev only — open access) |
+| `CORS_ALLOWED_ORIGINS` | empty | Comma-separated browser origins allowed to call Core; empty = any origin (dev only) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | empty | Enables OpenTelemetry tracing (e.g. Jaeger) |
 | `CONFIG_FILE` | empty | YAML for per-plugin rate/limit overrides — see [config.example.yaml](./config.example.yaml) |
 
-Per-plugin limits (rate, bulkhead, circuit breaker, timeouts) can also be tuned
-globally via `RATE_PER_SEC`, `BULKHEAD_MAX`, `CB_THRESHOLD`, etc.
+Per-plugin limits (rate, bulkhead, circuit breaker, timeouts, health-check
+interval) can also be tuned globally via env vars: `RATE_PER_SEC`,
+`BULKHEAD_MAX`, `CB_THRESHOLD`, `CB_RESET_TIMEOUT`, `REQUEST_TIMEOUT`,
+`HEALTH_INTERVAL`. The per-tenant rate sub-limit (`tenant_rate_per_sec`,
+`tenant_rate_burst` — caps one tenant's share of a plugin's overall budget)
+has no env-var form and can only be set via `CONFIG_FILE`.
+
+See [docker-compose.example.yml](./docker-compose.example.yml) for every var
+with its default spelled out. `docker-compose.yml` itself reads each one as
+`${VAR:-default}`, so it runs unchanged with nothing set — export a var, or
+put it in a `.env` file next to the compose file, to override just that one.
+The Jenkins pipeline exposes the same vars as build parameters (blank =
+compose default) for changing a deploy (e.g. the port) without touching code.
 
 ---
 
@@ -187,14 +201,16 @@ globally via `RATE_PER_SEC`, `BULKHEAD_MAX`, `CB_THRESHOLD`, etc.
 ## Project structure
 
 ```
-cmd/apicorex/      entrypoint
+cmd/apicorex/      entrypoint + embedded dashboard
+  admin/           gateway dashboard: Next.js SPA, statically exported and
+                    embedded into the binary (served at /dashboard, /plugin)
 internal/
   auth/            device-token introspection client (calls Identity)
   config/          config-driven protection limits
-  controlplane/    HTTP register/heartbeat + signed plugin tokens
+  controlplane/    HTTP register/heartbeat + signed plugin tokens + dashboard login
   dispatcher/      reverse proxy + WebSocket + tracing + metrics (data plane)
   manifest/        plugin manifest types
-  middleware/      auth + tenant-header injection (anti-spoofing)
+  middleware/      auth + CORS + tenant-header injection (anti-spoofing)
   openapi/         OpenAPI spec merge for Scalar UI
   protection/      firewall, rate limit, bulkhead, circuit breaker, health, metrics, logs
   registry/        in-memory plugin store
