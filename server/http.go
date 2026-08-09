@@ -139,7 +139,17 @@ func NewHTTP(
 	// core endpoints, control plane, and plugin public routes. /docs is skipped
 	// here too since it isn't part of the proxied API; it has its own
 	// dashboard-session-cookie gate registered above (RequireDashboardSession).
+	//
+	// A public route still gets OptionalAuth, not a bare skip: a
+	// server-rendered plugin UI (e.g. a login page and the dashboard behind it)
+	// commonly shares one public path prefix, because the plugin has no other
+	// way to serve the unauthenticated login page itself. Skipping auth
+	// entirely there would leave the authenticated pages on that same prefix
+	// with no identity to inject tenant headers from — permanently logged out
+	// despite a valid session cookie. OptionalAuth resolves one if present
+	// without rejecting the request when it isn't.
 	authMiddleware := middleware.Auth(introspector)
+	optionalAuthMiddleware := middleware.OptionalAuth(introspector)
 	engine.Use(func(c *gin.Context) {
 		p := c.Request.URL.Path
 		if p == "/health" || p == "/plugins" || p == "/plugin" || p == "/metrics" || strings.HasPrefix(p, "/docs") || strings.HasPrefix(p, "/_core") || strings.HasPrefix(p, "/dashboard") {
@@ -147,7 +157,7 @@ func NewHTTP(
 			return
 		}
 		if disp.IsPublic(c.Request.Method, p) {
-			c.Next()
+			optionalAuthMiddleware(c)
 			return
 		}
 		authMiddleware(c)

@@ -74,6 +74,36 @@ func Auth(introspector *auth.Introspector) gin.HandlerFunc {
 	}
 }
 
+// OptionalAuth resolves whatever token is present and stores the identity for
+// IdentityFrom, but never rejects the request — a missing, malformed, or
+// invalid token just leaves the identity unset. For public routes.
+//
+// A public route serves both an unauthenticated visitor (a login page, a
+// static asset) and, on the very same path, a signed-in one reading a
+// cookie-based session (a server-rendered dashboard under that same public
+// prefix — see TokenCookie): Auth would reject the first, and skipping auth
+// entirely for public routes leaves the second permanently logged out, since
+// InjectTenantHeaders has no identity to inject from. This is the middle
+// ground: try to resolve, keep going either way.
+func OptionalAuth(introspector *auth.Introspector) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if introspector == nil {
+			c.Next()
+			return
+		}
+		tokenStr, ok := deviceToken(c)
+		if !ok || !strings.HasPrefix(tokenStr, "zdt_") {
+			c.Next()
+			return
+		}
+		id, err := introspector.Resolve(c.Request.Context(), auth.HashToken(tokenStr), c.GetHeader(HeaderActingUser))
+		if err == nil {
+			c.Set(identityKey, id)
+		}
+		c.Next()
+	}
+}
+
 // deviceToken pulls the caller's device token from the Authorization header,
 // falling back to the cookie a server-rendered plugin UI sets (see TokenCookie).
 //
