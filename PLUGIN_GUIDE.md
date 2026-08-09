@@ -56,6 +56,8 @@ Core registration er por ei endpoint **pull** kore plugin ke jane. Eta return ko
 | `public_paths[]` | `routes[].public: true` er bikolpo — path list diye public mark kora. |
 | `openapi_spec` | (optional) Full OpenAPI 3 JSON object. Scalar UI te schema docs dekhanor jonno. Na dile route kaj korbe kintu docs e shudhu path dekhabe. |
 | `migrations[]` | (optional) Tenant-scoped DB migration. Identity plugin install er somoy protita tenant schema-e run kore. |
+| `permissions[]` | (optional) Ei plugin je permission gulo enforce kore. Identity role editor-er picker-e dekhay. Dekho [Permissions + roles declare kora](#permissions--roles-declare-kora). |
+| `roles[]` | (optional) Default role template. Plugin install er somoy protita tenant-e custom role hisebe seed hoy. |
 
 **Important:** `routes[]`-e ja declare korbe, Core shudhu sei path gulo-i forward korbe। Manifest-e na thakle Core 404 dibe।
 
@@ -408,6 +410,73 @@ POST /plugins/uninstall   (auth required)
 ```
 - `drop_data: false` → shudhu install record muche, **tenant-er table/data thake** (abar install korle data ফেরত)। Temporary disable / re-subscribe-er jonno.
 - `drop_data: true` → plugin-er `down_sql` chaলায় (DROP TABLE), **data permanently muche**। Tenant offboarding / GDPR delete-er jonno.
+
+---
+
+## Permissions + roles declare kora
+
+Identity-r nijer permission vocabulary shudhu Identity ja govern kore tar jonno —
+users, branches, plugin install, billing, tenant settings. Tomar domain-er
+permission (`student:write`, `patient:read`, `sale:void`) **tomar plugin-er**,
+tai manifest-e declare korte hobe.
+
+```json
+{
+  "name": "schoolyze",
+  "permissions": [
+    { "permission": "student:read",  "description": "View students", "resource_group": "Students" },
+    { "permission": "student:write", "description": "Add or edit students", "resource_group": "Students" },
+    { "permission": "fee:collect",   "description": "Collect fee payments", "resource_group": "Fees" }
+  ],
+  "roles": [
+    { "slug": "teacher", "name": "Teacher",
+      "permissions": ["student:read", "attendance:write"] },
+    { "slug": "accountant", "name": "Accountant",
+      "permissions": ["fee:*", "student:read"] }
+  ]
+}
+```
+
+Kivabe kaj kore:
+
+- Identity Core theke tomar manifest pull kore (register er por, ar periodically),
+  `permissions[]` store kore. `GET /permissions` tokhon Identity-r built-in
+  vocabulary + sob registered plugin-er declaration merge kore dey — tai role
+  editor-er picker-e tomar permission dekha jay.
+- `roles[]` template. Plugin jei tenant-e install hoy, sekhane **ordinary custom
+  role** hisebe seed hoy — tenant chaile edit/delete korte parbe. Jei slug tenant-er
+  age thekei ache, seta skip hoy: kono institution nijer role narrow korle
+  reinstall ba redeploy seta undo korbe na.
+
+Keno manifest-e, Identity-r code-e na: ekta Identity binary sob product-e chole.
+School deployment school permission dekhabe, clinic deployment clinic-er — kono
+build tag nai, per-deployment config sync korar dorkar nai. Permission jei code
+seta enforce kore, tar pashei thake.
+
+**Mone rakho:**
+
+- `permissions[]` e wildcard cholbe na (`student:*`) — picker-e concrete
+  permission-i thake. `roles[].permissions` e wildcard cholbe.
+- Declare kora mane enforce kora **na**। Enforce korte route-e `permission`
+  field dao (Core gateway-tei 403 dey), ar handler-e `HasPermission` diye
+  re-check koro.
+- Manifest theke ekta permission sorale seta picker theke chole jabe, kintu
+  jara age peyeche tader access ba tenant-er seeded role bhange na.
+
+Go plugin holo `internal/plugin` runtime-e helper ache:
+
+```go
+p.DeclarePermissions(
+    plugin.DeclaredPermission{Permission: "student:read", Description: "View students"},
+    plugin.DeclaredPermission{Permission: "fee:collect", ResourceGroup: "Fees"},
+)
+p.DeclareRoles(plugin.DeclaredRole{
+    Slug: "teacher", Name: "Teacher",
+    Permissions: []string{"student:read", "attendance:write"},
+})
+```
+
+Onno language-e plugin holo shudhu manifest JSON-e field duita add kore dao।
 
 ---
 

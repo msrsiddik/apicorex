@@ -15,6 +15,23 @@ import (
 
 const identityKey = "identity"
 
+// TokenCookie is where a browser-driven plugin UI keeps its device token.
+//
+// A server-rendered page cannot set an Authorization header on an ordinary
+// navigation — a bookmark, a refresh, a link — so a plugin that serves HTML
+// (rather than being called by an app) has no way to authenticate the very
+// first request. Reading the same token from a cookie fixes that without
+// changing anything downstream: it is hashed, introspected and turned into the
+// same X-ApiCoreX-* headers as a bearer token.
+//
+// The header still wins when both are present, so apps are unaffected.
+//
+// Whoever sets this cookie must mark it HttpOnly and Secure, and must protect
+// mutating requests against CSRF: unlike a bearer header, a cookie is attached
+// by the browser automatically, so a cross-site form post would otherwise
+// carry the user's credentials.
+const TokenCookie = "apicorex_token"
+
 // HeaderActingUser is CLIENT-supplied input: the PIN-unlocked user the device
 // claims is operating it. It is validated (membership + status) during
 // introspection, then consumed — plugins never see it, only the trusted
@@ -31,12 +48,11 @@ func Auth(introspector *auth.Introspector) gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		header := c.GetHeader("Authorization")
-		if header == "" || !strings.HasPrefix(header, "Bearer ") {
+		tokenStr, ok := deviceToken(c)
+		if !ok {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing authorization header"})
 			return
 		}
-		tokenStr := strings.TrimPrefix(header, "Bearer ")
 		if !strings.HasPrefix(tokenStr, "zdt_") {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
 			return
@@ -56,6 +72,23 @@ func Auth(introspector *auth.Introspector) gin.HandlerFunc {
 		c.Set(identityKey, id)
 		c.Next()
 	}
+}
+
+// deviceToken pulls the caller's device token from the Authorization header,
+// falling back to the cookie a server-rendered plugin UI sets (see TokenCookie).
+//
+// The header takes precedence so an app that sends both is never surprised by a
+// stale cookie left over from a browser session on the same host.
+func deviceToken(c *gin.Context) (string, bool) {
+	if h := c.GetHeader("Authorization"); strings.HasPrefix(h, "Bearer ") {
+		if t := strings.TrimPrefix(h, "Bearer "); t != "" {
+			return t, true
+		}
+	}
+	if t, err := c.Cookie(TokenCookie); err == nil && t != "" {
+		return t, true
+	}
+	return "", false
 }
 
 // IdentityFrom returns the resolved identity stored by Auth, or nil if the

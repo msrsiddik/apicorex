@@ -30,4 +30,14 @@ type Manifest struct {
 	PublicPaths []string        `json:"public_paths,omitempty"`
 	Migrations  []Migration     `json:"migrations,omitempty"`
 	OpenAPISpec json.RawMessage `json:"openapi_spec,omitempty"`
+
+	// Permissions and Roles are the plugin's declared RBAC vocabulary. Core does
+	// not interpret them — it enforces the per-route `permission` above and
+	// nothing more. They are carried verbatim so Identity, which pulls this
+	// manifest from Core's control plane, can offer them in its role editor and
+	// seed the roles per tenant. Kept as raw JSON for the same reason
+	// migrations are a Core concern only in transit: the meaning belongs to
+	// Identity, and Core should not need a release when that shape changes.
+	Permissions json.RawMessage `json:"permissions,omitempty"`
+	Roles       json.RawMessage `json:"roles,omitempty"`
 }

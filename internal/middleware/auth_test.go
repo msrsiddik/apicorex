@@ -98,9 +98,9 @@ func TestAuth_OwnerDefault(t *testing.T) {
 	r, captured := authTestRig(t, srv.URL)
 
 	w := doAuth(r, map[string]string{
-		"Authorization":      "Bearer zdt_good",
-		HeaderUserID:         "u_spoofed", // must be stripped, then overwritten
-		HeaderPermissions:    "*:*",
+		"Authorization":   "Bearer zdt_good",
+		HeaderUserID:      "u_spoofed", // must be stripped, then overwritten
+		HeaderPermissions: "*:*",
 	})
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (%s)", w.Code, w.Body)
@@ -203,4 +203,3 @@ func TestAuth_CachesIntrospection(t *testing.T) {
 		t.Errorf("identity calls = %d, want 1 (cached)", calls)
 	}
 }
-
