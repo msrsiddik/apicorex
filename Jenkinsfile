@@ -35,6 +35,20 @@ pipeline {
     }
 
     stages {
+        stage('Dashboard') {
+            // cmd/apicorex/dashboard.go does //go:embed all:admin/out, so Vet
+            // and Build (which run natively here, not through the Dockerfile's
+            // own Node stage) need the static export to exist before either
+            // will compile.
+            steps {
+                sh '''
+                    cd cmd/apicorex/admin
+                    npm ci
+                    npm run build
+                '''
+            }
+        }
+
         stage('Vet') {
             steps {
                 sh 'go vet ./...'
