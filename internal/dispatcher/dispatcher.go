@@ -288,6 +288,23 @@ func (d *Dispatcher) IsPublic(method, path string) bool {
 	return entry != nil && entry.public
 }
 
+// IsRoutable reports whether some registered plugin route already covers
+// method+path — the ordinary case. When false, the request may still be a
+// custom-domain request whose Host carries the tenant instead of the path;
+// see middleware.ResolveCustomDomain, which rewrites the path before this
+// would otherwise 404.
+func (d *Dispatcher) IsRoutable(method, path string) bool {
+	return d.match(method, path) != nil
+}
+
+// FindDomainSurface exposes the registry's plugin-surface lookup (see
+// registry.FindByDomainSurface) — the path prefix a resolved custom-domain
+// request should be rewritten under before it's routed normally.
+func (d *Dispatcher) FindDomainSurface(surface string) (pathPrefix string, ok bool) {
+	_, prefix, ok := d.reg.FindByDomainSurface(surface)
+	return prefix, ok
+}
+
 // authorized reports whether the resolved identity (the ACTING user, fresh
 // from introspection) satisfies entry's declared permission: either the
 // permission itself (wildcards honored) or platform_admin, since platform

@@ -41,6 +41,7 @@ func NewHTTP(
 	disp *dispatcher.Dispatcher,
 	injector *openapi.Injector,
 	introspector *auth.Introspector,
+	domainResolver *auth.DomainResolver,
 	cpHandlers *controlplane.Handlers,
 	dashboardHandler gin.HandlerFunc,
 	addr string,
@@ -148,6 +149,11 @@ func NewHTTP(
 	// with no identity to inject tenant headers from — permanently logged out
 	// despite a valid session cookie. OptionalAuth resolves one if present
 	// without rejecting the request when it isn't.
+	// Custom-domain path rewrite runs before the public/auth split below, so a
+	// request that only resolves via Host (see resolveCustomDomain) is
+	// classified correctly by the time IsPublic looks at its path.
+	engine.Use(resolveCustomDomain(disp, domainResolver))
+
 	authMiddleware := middleware.Auth(introspector)
 	optionalAuthMiddleware := middleware.OptionalAuth(introspector)
 	engine.Use(func(c *gin.Context) {

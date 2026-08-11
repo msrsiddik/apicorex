@@ -1,6 +1,8 @@
 package dispatcher
 
 import (
+	"net/http/httputil"
+	"net/url"
 	"testing"
 
 	"github.com/msrsiddik/apicorex/internal/auth"
@@ -83,6 +85,42 @@ func TestDispatcher_RoutePermission(t *testing.T) {
 	}
 	if e := d.match("GET", "/branches"); e == nil || e.permission != "" {
 		t.Errorf("GET /branches should carry no permission, got %q", e.permission)
+	}
+}
+
+// IsRoutable mirrors IsPublic's matching but says nothing about auth — it's
+// what the custom-domain rewrite (server.resolveCustomDomain) checks before
+// bothering to resolve a Host at all.
+func TestDispatcher_IsRoutable(t *testing.T) {
+	d := newTestDispatcher()
+	d.AddRoutes("id1", "schoolyze", "internal", []manifest.Route{
+		{Method: "GET", Path: "/school/*"},
+	})
+
+	if !d.IsRoutable("GET", "/school/portal/login") {
+		t.Error("a path already covered by a registered prefix should be routable")
+	}
+	if d.IsRoutable("GET", "/login") {
+		t.Error("a bare path with no matching route should not be routable")
+	}
+}
+
+// FindDomainSurface exposes the registry's lookup through the dispatcher, the
+// only handle server.resolveCustomDomain has on it.
+func TestDispatcher_FindDomainSurface(t *testing.T) {
+	d := newTestDispatcher()
+	if err := d.reg.Register("id1", "schoolyze", "http://plugin:1", "1.0.0", "internal",
+		manifest.Manifest{DomainSurfaces: []manifest.DomainSurface{
+			{Surface: "portal", PathPrefix: "/school/portal"},
+		}}, func(u *url.URL) *httputil.ReverseProxy { return &httputil.ReverseProxy{} }); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	if prefix, ok := d.FindDomainSurface("portal"); !ok || prefix != "/school/portal" {
+		t.Errorf("got (%q, %v), want (/school/portal, true)", prefix, ok)
+	}
+	if _, ok := d.FindDomainSurface("website"); ok {
+		t.Error("an undeclared surface should not resolve")
 	}
 }
 

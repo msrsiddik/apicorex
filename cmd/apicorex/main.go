@@ -56,8 +56,13 @@ func main() {
 	// Device tokens are resolved via Identity's /internal/introspect, guarded by
 	// the shared PLUGIN_API_KEY. Without it auth is disabled (dev only).
 	var introspector *auth.Introspector
+	var domainResolver *auth.DomainResolver
 	if pluginAPIKey != "" {
 		introspector = auth.NewIntrospector(reg, pluginAPIKey)
+		// Custom-domain routing (a tenant's own domain, no path prefix) shares
+		// the same plugin-to-plugin trust as introspection — see
+		// resolveCustomDomain in server/http.go.
+		domainResolver = auth.NewDomainResolver(reg, pluginAPIKey)
 	} else {
 		log.Println("[warn] PLUGIN_API_KEY not set — auth middleware disabled")
 	}
@@ -66,7 +71,7 @@ func main() {
 		log.Println("[warn] DASHBOARD_SECRET not set — gateway dashboard login disabled")
 	}
 	cpHandlers := controlplane.New(reg, disp, injector, pluginAPIKey, allowlist, pluginAPIKey, dashboardSecret)
-	httpSrv := server.NewHTTP(reg, disp, injector, introspector, cpHandlers, serveDashboard, httpAddr)
+	httpSrv := server.NewHTTP(reg, disp, injector, introspector, domainResolver, cpHandlers, serveDashboard, httpAddr)
 
 	healthMon := protection.NewHealthMonitor(reg, cb, cfg.HealthInterval)
 

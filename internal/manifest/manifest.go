@@ -20,16 +20,27 @@ type Migration struct {
 	DownSQL string `json:"down_sql"`
 }
 
+// DomainSurface declares one of a plugin's URLs as reachable by a tenant's own
+// custom domain (e.g. Schoolyze's panel/portal/website — see
+// docs/multi-tenant-plan.md in schoolyze-server). Surface is a plugin-defined
+// name, opaque to Core; PathPrefix is where Core rewrites a resolved request
+// to before proxying — see dispatcher.resolveByHost.
+type DomainSurface struct {
+	Surface    string `json:"surface"`
+	PathPrefix string `json:"path_prefix"`
+}
+
 // Manifest is the document Core pulls from a plugin's /_apicorex/manifest.
 type Manifest struct {
-	Name        string          `json:"name"`
-	Version     string          `json:"version"`
-	Description string          `json:"description,omitempty"`
-	PluginType  string          `json:"plugin_type"`
-	Routes      []Route         `json:"routes"`
-	PublicPaths []string        `json:"public_paths,omitempty"`
-	Migrations  []Migration     `json:"migrations,omitempty"`
-	OpenAPISpec json.RawMessage `json:"openapi_spec,omitempty"`
+	Name           string          `json:"name"`
+	Version        string          `json:"version"`
+	Description    string          `json:"description,omitempty"`
+	PluginType     string          `json:"plugin_type"`
+	Routes         []Route         `json:"routes"`
+	PublicPaths    []string        `json:"public_paths,omitempty"`
+	DomainSurfaces []DomainSurface `json:"domain_surfaces,omitempty"`
+	Migrations     []Migration     `json:"migrations,omitempty"`
+	OpenAPISpec    json.RawMessage `json:"openapi_spec,omitempty"`
 
 	// Permissions and Roles are the plugin's declared RBAC vocabulary. Core does
 	// not interpret them — it enforces the per-route `permission` above and
