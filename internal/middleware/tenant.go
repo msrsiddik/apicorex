@@ -18,7 +18,12 @@ const (
 	HeaderUserType    = "X-ApiCoreX-User-Type"
 	HeaderRoles       = "X-ApiCoreX-Roles"
 	HeaderPermissions = "X-ApiCoreX-Permissions"
-	HeaderRequestID   = "X-ApiCoreX-Request-ID"
+	// HeaderFeatures carries the tenant's enabled plugin modules, qualified as
+	// "plugin:key". Resolved per TENANT, not per user: permissions say whether
+	// this person may act, features say whether the institution has the module
+	// at all. Identity decides from the tenant's plan and any override.
+	HeaderFeatures  = "X-ApiCoreX-Features"
+	HeaderRequestID = "X-ApiCoreX-Request-ID"
 	// HeaderTokenHash carries the sha256 of the bearer device token so Identity's
 	// logout / branch-switch can act on the exact token row without ever seeing
 	// the raw token.
@@ -28,8 +33,8 @@ const (
 var apicorexHeaders = []string{
 	HeaderTenantID, HeaderTenantSlug, HeaderSchema,
 	HeaderBranchID, HeaderBranchSlug,
-	HeaderUserID, HeaderUserType, HeaderRoles, HeaderPermissions, HeaderRequestID,
-	HeaderTokenHash,
+	HeaderUserID, HeaderUserType, HeaderRoles, HeaderPermissions, HeaderFeatures,
+	HeaderRequestID, HeaderTokenHash,
 }
 
 // StripSpoofedHeaders removes any client-supplied X-ApiCoreX-* headers so clients
@@ -66,6 +71,7 @@ func InjectTenantHeaders(c *gin.Context) {
 	h.Set(HeaderUserType, id.UserType)
 	h.Set(HeaderRoles, strings.Join(id.Roles, ","))
 	h.Set(HeaderPermissions, strings.Join(id.Permissions, ","))
+	h.Set(HeaderFeatures, strings.Join(id.Features, ","))
 	h.Set(HeaderTokenHash, id.TokenHash)
 	if rid := c.GetHeader("X-Request-ID"); rid != "" {
 		h.Set(HeaderRequestID, rid)
