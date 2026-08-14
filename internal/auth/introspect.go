@@ -47,6 +47,10 @@ type Identity struct {
 	UserType    string   `json:"user_type"`
 	Roles       []string `json:"roles"`
 	Permissions []string `json:"permissions"`
+	// Features are the tenant's enabled plugin modules ("plugin:key"). Carried
+	// alongside permissions because they ride the same introspection call —
+	// every plugin gets them with no extra request and no new trust boundary.
+	Features []string `json:"features"`
 	// TokenHash is the sha256 of the bearer — injected so Identity's logout /
 	// branch-switch can act on the exact token row.
 	TokenHash string `json:"-"`

@@ -50,6 +50,8 @@ func newIdentityStub(t *testing.T) *httptest.Server {
 				TenantID: "t_1", TenantSlug: "acme", SchemaName: "tenant_acme",
 				UserID: "u_staff", UserType: "tenant_user",
 				Roles: []string{"member"}, Permissions: []string{"user:read", "branch:read"},
+				// Per tenant, so the acting user does not change them.
+				Features: []string{"schoolyze:attendance", "schoolyze:fees"},
 			})
 		default:
 			json.NewEncoder(w).Encode(auth.Identity{
@@ -57,6 +59,7 @@ func newIdentityStub(t *testing.T) *httptest.Server {
 				BranchID: "br_1", BranchSlug: "main",
 				UserID: "u_owner", UserType: "tenant_user",
 				Roles: []string{"owner"}, Permissions: []string{"*:*"},
+				Features: []string{"schoolyze:attendance", "schoolyze:fees"},
 			})
 		}
 	}))

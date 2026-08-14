@@ -51,4 +51,14 @@ type Manifest struct {
 	// Identity, and Core should not need a release when that shape changes.
 	Permissions json.RawMessage `json:"permissions,omitempty"`
 	Roles       json.RawMessage `json:"roles,omitempty"`
+
+	// Features are the plugin's user-visible modules, carried verbatim for the
+	// same reason and by the same route as Permissions above: Identity packages
+	// them into plans and resolves them per tenant, and Core stays ignorant of
+	// what any of them mean. Note the asymmetry with the per-route `permission`
+	// field — Core enforces permissions at the gateway, but never features. A
+	// feature governs what a plugin's own UI offers, which only the plugin can
+	// police; Core would have to be told which routes belong to which module,
+	// and that is exactly the domain knowledge this design keeps out of it.
+	Features json.RawMessage `json:"features,omitempty"`
 }
