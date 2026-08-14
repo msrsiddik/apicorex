@@ -1,26 +1,26 @@
 # ApiCoreX — Plugin Authoring Guide
 
-Eta diye **je kono language** (Go, Node, Python, Rust, Java...) e ApiCoreX plugin banano jay। Plugin holo ekta normal HTTP server। Core ekta reverse proxy — bearer device token take Identity-r kache introspect kore verify kore, tenant context header e inject kore, request stream kore tomar plugin-e forward kore.
+An ApiCoreX plugin can be written in **any language** (Go, Node, Python, Rust, Java...). A plugin is an ordinary HTTP server. Core is a reverse proxy: it verifies the bearer device token by introspecting it with Identity, injects tenant context as headers, and streams the request through to your plugin.
 
-**Kono SDK nai** — niche ja ache shudhu sei HTTP contract follow korlei chole. Je kono framework (Gin, Echo, Flask, Express, Spring...) ba stdlib HTTP server cholbe.
+**There is no SDK** — following the HTTP contract below is all it takes. Any framework (Gin, Echo, Flask, Express, Spring...) or a stdlib HTTP server will do.
 
 ---
 
-## Plugin ki ki korte hobe (4 ta jinish)
+## What a plugin must do (four things)
 
-1. Ekta HTTP server chalao (je kono port-e).
-2. `GET /_apicorex/manifest` serve koro → plugin describe kora JSON.
-3. `GET /_apicorex/health` serve koro → `{"status":"ok"}`.
-4. Boot-e Core-ke ekbar bolo: `POST {CORE_URL}/_core/register`.
-   (optional kintu recommended) proti ~15s e `POST {CORE_URL}/_core/heartbeat`.
+1. Run an HTTP server (on any port).
+2. Serve `GET /_apicorex/manifest` → JSON describing the plugin.
+3. Serve `GET /_apicorex/health` → `{"status":"ok"}`.
+4. Tell Core once at boot: `POST {CORE_URL}/_core/register`.
+   (Optional but recommended) `POST {CORE_URL}/_core/heartbeat` every ~15s.
 
-Tarpor tomar actual routes (`/invoices`, `/hello`, jai houk) normal HTTP endpoint hisebe likho. Core sei route gulo proxy korbe.
+Then write your actual routes (`/invoices`, `/hello`, whatever) as ordinary HTTP endpoints. Core proxies them.
 
 ---
 
 ## 1. Manifest — `GET /_apicorex/manifest`
 
-Core registration er por ei endpoint **pull** kore plugin ke jane. Eta return koro:
+After registration Core **pulls** this endpoint to learn about the plugin. Return this:
 
 ```json
 {
@@ -35,6 +35,9 @@ Core registration er por ei endpoint **pull** kore plugin ke jane. Eta return ko
   ],
   "public_paths": ["/webhooks/stripe"],
   "openapi_spec": { },
+  "features": [
+    { "key": "invoicing", "label": "Invoicing", "group": "Finance" }
+  ],
   "migrations": [
     {
       "version": "20260101_001",
@@ -46,20 +49,21 @@ Core registration er por ei endpoint **pull** kore plugin ke jane. Eta return ko
 }
 ```
 
-| Field | Mane |
-|-------|------|
-| `name` | Unique plugin name. Route ownership ar registry-e plugin identify korte use hoy. |
-| `version` | Plugin version (docs e dekhabe). |
-| `plugin_type` | `"internal"` (1000 req/s) ba `"public"` (100 req/s rate limit)। |
-| `routes[]` | Core ei route gulo-i proxy korbe. `:param` gin-style segment. |
-| `routes[].public` | `true` hole oi route-e Core device-token auth **skip** korbe. |
-| `public_paths[]` | `routes[].public: true` er bikolpo — path list diye public mark kora. |
-| `openapi_spec` | (optional) Full OpenAPI 3 JSON object. Scalar UI te schema docs dekhanor jonno. Na dile route kaj korbe kintu docs e shudhu path dekhabe. |
-| `migrations[]` | (optional) Tenant-scoped DB migration. Identity plugin install er somoy protita tenant schema-e run kore. |
-| `permissions[]` | (optional) Ei plugin je permission gulo enforce kore. Identity role editor-er picker-e dekhay. Dekho [Permissions + roles declare kora](#permissions--roles-declare-kora). |
-| `roles[]` | (optional) Default role template. Plugin install er somoy protita tenant-e custom role hisebe seed hoy. |
+| Field | Meaning |
+|-------|---------|
+| `name` | Unique plugin name. Used for route ownership and to identify the plugin in the registry. |
+| `version` | Plugin version (shown in the docs). |
+| `plugin_type` | `"internal"` (1000 req/s) or `"public"` (100 req/s rate limit). |
+| `routes[]` | Only these routes are proxied by Core. `:param` is a gin-style segment. |
+| `routes[].public` | `true` makes Core **skip** device-token auth on that route. |
+| `public_paths[]` | An alternative to `routes[].public: true` — mark paths public by listing them. |
+| `openapi_spec` | (optional) A full OpenAPI 3 JSON object, for schema docs in the Scalar UI. Without it routes still work, but the docs show paths only. |
+| `migrations[]` | (optional) Tenant-scoped DB migrations. Identity runs them in every tenant schema when the plugin is installed. |
+| `permissions[]` | (optional) The permissions this plugin enforces. Identity offers them in the role editor's picker. See [Declaring permissions and roles](#declaring-permissions-and-roles). |
+| `roles[]` | (optional) Default role templates, seeded as custom roles in each tenant when the plugin is installed. |
+| `features[]` | (optional) This plugin's user-visible modules, so they can be sold in a plan. **Not** permissions — see [Declaring modules (features)](#declaring-modules-features--so-they-can-be-sold-in-a-plan). |
 
-**Important:** `routes[]`-e ja declare korbe, Core shudhu sei path gulo-i forward korbe। Manifest-e na thakle Core 404 dibe।
+**Important:** Core forwards only the paths declared in `routes[]`. Anything not in the manifest gets a 404 from Core.
 
 ---
 
@@ -69,13 +73,13 @@ Core registration er por ei endpoint **pull** kore plugin ke jane. Eta return ko
 { "status": "ok" }
 ```
 
-Core proti 30s e ei endpoint check kore। Non-200 ba unreachable hole plugin "unhealthy" mark hoy ar circuit breaker open hoy। Recover korle abar live.
+Core checks this endpoint every 30s. A non-200 or an unreachable plugin is marked "unhealthy" and its circuit breaker opens. It goes live again once it recovers.
 
 ---
 
 ## 3. Register — `POST {CORE_URL}/_core/register`
 
-Plugin boot howar por (HTTP server ready holey) Core-ke ekbar call koro:
+Once the plugin has booted and its HTTP server is ready, call Core once:
 
 ```json
 POST http://localhost:8080/_core/register
@@ -87,19 +91,19 @@ Content-Type: application/json
 }
 ```
 
-- `base_url` — Core ei URL diye tomar plugin-e pouchabe (manifest pull + request proxy)। Docker/k8s e eta service URL (bind address na — `:0` bind korle o advertised URL alada হতে পারে).
-- `api_key` — `PLUGIN_API_KEY` env var er sathe match korte hobe (Core-e set kora). Match na hole 401।
+- `base_url` — the URL Core uses to reach your plugin (to pull the manifest and to proxy requests). In Docker/k8s this is the service URL, not the bind address — binding to `:0` still needs a resolvable advertised URL.
+- `api_key` — must match Core's `PLUGIN_API_KEY` env var. A mismatch is a 401.
 
-Core respond kore:
+Core responds:
 ```json
 { "plugin_id": "billing-3f2a9c11", "plugin_token": "eyJ...signed..." }
 ```
 
-Ei `plugin_id` **ar `plugin_token`** duটোই save koro। `plugin_token` ekta signed credential — heartbeat ar deregister-e eta pathate hobe (Core verify kore)। Register er por Core nije `GET {base_url}/_apicorex/manifest` pull kore route gulo nibe.
+Save **both** the `plugin_id` and the `plugin_token`. The token is a signed credential you must send with every heartbeat and with deregistration, and Core verifies it. Right after registration Core pulls `GET {base_url}/_apicorex/manifest` itself to learn your routes.
 
-> **Allowlist:** Core-e `PLUGIN_ALLOWLIST` set thakle (e.g. `identity,billing`), shudhu oi name-er plugin register korte parbe। Khali thakle (dev) sob allowed।
+> **Allowlist:** if Core has `PLUGIN_ALLOWLIST` set (e.g. `identity,billing`), only plugins with those names may register. Empty (the dev default) allows everything.
 
-> **Important:** Register call korar age tomar HTTP server **fully ready** thakte hobe — karon Core sathe sathe `{base_url}/_apicorex/manifest` pull kore। Tai register-ke ekta **retry loop**-e rakho (server up howa porjonto)। Core register-er somoy manifest pull korte na parle `502` dibe।
+> **Important:** your HTTP server must be **fully ready before** you call register, because Core immediately pulls `{base_url}/_apicorex/manifest`. Put registration in a **retry loop** until the server is up. If Core cannot pull the manifest during registration it returns `502`.
 
 ---
 
@@ -109,7 +113,7 @@ Ei `plugin_id` **ar `plugin_token`** duটোই save koro। `plugin_token` ekt
 { "plugin_id": "billing-3f2a9c11", "plugin_token": "eyJ...signed..." }
 ```
 
-`plugin_token` register-e paওয়া token। ~15s interval-e pathao. Na pathaleo health-check (30s) tomake live rakhbe, kintu heartbeat faster. Token invalid hole Core `401` dibe.
+`plugin_token` is the token you got at registration. Send this every ~15s. Skipping it is survivable — the 30s health check keeps you live — but the heartbeat is faster. An invalid token gets a `401`.
 
 **Deregister (graceful shutdown):**
 ```json
@@ -121,28 +125,38 @@ POST {CORE_URL}/_core/deregister
 
 ## Tenant context — injected headers
 
-Core device token resolve korar por (Identity-r `/internal/introspect` call kore) **trusted headers** inject kore tomar plugin-e। Client ei header spoof korte parbe na — Core protita request-e client-supplied `X-ApiCoreX-*` strip kore, tarpor introspection result theke real value boshay.
+After resolving the device token (by calling Identity's `/internal/introspect`), Core injects **trusted headers** into the request. A client cannot spoof them: Core strips every client-supplied `X-ApiCoreX-*` header on every request, then sets the real values from the introspection result.
 
-| Header | Mane |
-|--------|------|
+| Header | Meaning |
+|--------|---------|
 | `X-ApiCoreX-Tenant-ID` | Tenant ID (e.g. `t_acme`) |
 | `X-ApiCoreX-Tenant-Slug` | Tenant slug (e.g. `acme`) |
 | `X-ApiCoreX-Schema` | Tenant Postgres schema (e.g. `tenant_acme`) |
 | `X-ApiCoreX-User-ID` | Authenticated user ID |
 | `X-ApiCoreX-User-Type` | `platform` \| `customer` \| `both` |
+| `X-ApiCoreX-Branch-ID` | Branch the device token is scoped to |
+| `X-ApiCoreX-Branch-Slug` | Branch slug (e.g. `main`) |
 | `X-ApiCoreX-Roles` | Comma-separated roles (e.g. `owner,admin`) |
+| `X-ApiCoreX-Permissions` | Comma-separated permissions of the acting **user** |
+| `X-ApiCoreX-Features` | Comma-separated modules the **tenant** has, as `plugin:key` |
 | `X-ApiCoreX-Request-ID` | Per-request trace ID |
 
-Public route-e (auth skip) ei header gulo thakbe na — tomar handler-e empty check koro.
+Do not confuse the last two — the whole module system rests on the difference:
+
+- **Permissions** = what *this user* may do. Per user.
+- **Features** = whether *this institution* has the module at all. Per tenant —
+  identical for every user of that tenant.
+
+On a public route (auth skipped) these headers are absent — check for empty values in your handler.
 
 ---
 
 ## Streaming, file upload/download, WebSocket
 
-Core streaming reverse proxy — kichu extra korte hobe na:
-- **File upload/download** — body stream hoy, Core buffer kore na (GB-scale o cholbe).
-- **SSE** — `Content-Type: text/event-stream` + flush korle Core immediately flush kore.
-- **WebSocket** — `Connection: Upgrade` detect kore Core hijack-proxy kore (full-duplex)।
+Core is a streaming reverse proxy, so none of this needs extra work:
+- **File upload/download** — bodies stream through; Core does not buffer them (GB-scale is fine).
+- **SSE** — send `Content-Type: text/event-stream` and flush, and Core flushes immediately.
+- **WebSocket** — Core detects `Connection: Upgrade` and hijack-proxies it (full duplex).
 
 ---
 
@@ -216,13 +230,13 @@ threading.Thread(target=register, daemon=True).start()
 app.run(port=6000)
 ```
 
-`python app.py` → Core-e register hoye jabe, `GET http://localhost:8080/invoices` (with a valid device token) → proxied to plugin with tenant headers.
+`python app.py` registers with Core; `GET http://localhost:8080/invoices` (with a valid device token) is then proxied to the plugin with the tenant headers.
 
 ---
 
 ## Full example — Java (JDK built-in HttpServer), NO SDK
 
-Kono framework (Spring/Quarkus) lagbe na — JDK-er `com.sun.net.httpserver.HttpServer` diyei hobe. JSON manually string-e likha hoyeche (zero dependency rakhte)।
+No framework (Spring/Quarkus) is needed — the JDK's `com.sun.net.httpserver.HttpServer` is enough. The JSON is written out as strings by hand, to keep this dependency-free.
 
 ```java
 // Plugin.java — run: java Plugin.java   (JDK 11+, single-file source)
@@ -303,15 +317,15 @@ public class Plugin {
 }
 ```
 
-`java Plugin.java` → Core-e register, `GET http://localhost:8080/invoices` (valid device token soho) → proxied to Java plugin with tenant headers.
+`java Plugin.java` registers with Core; `GET http://localhost:8080/invoices` (with a valid device token) is proxied to the Java plugin with the tenant headers.
 
-> Production-e Spring Boot / Quarkus use korle aro shoja — sei framework-er JSON serialization + HTTP client diye manifest serve + register koro. Contract eki: `/_apicorex/manifest`, `/_apicorex/health`, `POST /_core/register`।
+> In production with Spring Boot or Quarkus this gets easier — use the framework's JSON serialization and HTTP client to serve the manifest and register. The contract is the same: `/_apicorex/manifest`, `/_apicorex/health`, `POST /_core/register`.
 
 ---
 
 ## Full example — Go (pure Gin, NO SDK)
 
-Kono ApiCoreX SDK nai — shudhu Gin + stdlib. Contract eki: manifest, health, register.
+There is no ApiCoreX SDK — just Gin and the stdlib. Same contract: manifest, health, register.
 
 ```go
 package main
@@ -386,39 +400,39 @@ func register() {
 }
 ```
 
-`go run main.go` → Core-e register, `GET http://localhost:8080/invoices` (valid device token soho) → proxied with tenant headers. Streaming/upload/WebSocket native Gin diyei chole.
+`go run main.go` registers with Core; `GET http://localhost:8080/invoices` (with a valid device token) is proxied with the tenant headers. Streaming, uploads and WebSockets work through plain Gin.
 
-> **OpenAPI docs:** Rich Scalar UI schema chaile manifest-er `openapi_spec` field-e ekta OpenAPI 3 JSON dao. Gin-e [oaswrap](https://github.com/oaswrap/spec) library use kore route theke auto-generate kora jay (reference: `apicorex-identity/internal/plugin/plugin.go` — Identity exactly eta kore)। Eta optional — na dile route list-i Scalar-e dekhabe.
+> **OpenAPI docs:** for a rich Scalar UI schema, put an OpenAPI 3 JSON document in the manifest's `openapi_spec` field. In Gin it can be generated from the routes with [oaswrap](https://github.com/oaswrap/spec) — see `apicorex-identity/internal/plugin/plugin.go`, which does exactly that. Optional: without it Scalar shows the route list only.
 
 ---
 
 ## Plugin install + migrations (multi-tenant)
 
-Plugin register howa = route live। Kintu tenant-scoped DB table create korte hole **install** korte hobe:
+Registering makes a plugin's routes live. Creating its tenant-scoped DB tables needs an **install**:
 
 ```
 POST /plugins/install   (Identity plugin route, auth required)
 { "tenant_id": "t_acme", "plugin_name": "billing" }
 ```
 
-Identity Core theke tomar manifest pull kore (`GET /_core/plugins/billing/manifest`), `migrations[]` niye `tenant_acme` schema-e run kore। Notun tenant register holeo installed plugin-er migration automatic chole।
+Identity pulls your manifest from Core (`GET /_core/plugins/billing/manifest`), takes `migrations[]` and runs them in the `tenant_acme` schema. When a new tenant registers, the migrations of every installed plugin run automatically.
 
-**Uninstall** — `drop_data` flag diye control:
+**Uninstall** — controlled by the `drop_data` flag:
 ```
 POST /plugins/uninstall   (auth required)
 { "tenant_id": "t_acme", "plugin_name": "billing", "drop_data": false }
 ```
-- `drop_data: false` → shudhu install record muche, **tenant-er table/data thake** (abar install korle data ফেরত)। Temporary disable / re-subscribe-er jonno.
-- `drop_data: true` → plugin-er `down_sql` chaলায় (DROP TABLE), **data permanently muche**। Tenant offboarding / GDPR delete-er jonno.
+- `drop_data: false` → removes the install record only; **the tenant's tables and data stay** (reinstalling brings the data back). For a temporary disable or a re-subscribe.
+- `drop_data: true` → runs the plugin's `down_sql` (DROP TABLE) and **deletes the data permanently**. For tenant offboarding or a GDPR delete.
 
 ---
 
-## Permissions + roles declare kora
+## Declaring permissions and roles
 
-Identity-r nijer permission vocabulary shudhu Identity ja govern kore tar jonno —
-users, branches, plugin install, billing, tenant settings. Tomar domain-er
-permission (`student:write`, `patient:read`, `sale:void`) **tomar plugin-er**,
-tai manifest-e declare korte hobe.
+Identity's own permission vocabulary covers only what Identity governs — users,
+branches, plugin installs, billing, tenant settings. The permissions of your
+domain (`student:write`, `patient:read`, `sale:void`) belong to **your plugin**,
+so you declare them in the manifest.
 
 ```json
 {
@@ -437,33 +451,34 @@ tai manifest-e declare korte hobe.
 }
 ```
 
-Kivabe kaj kore:
+How it works:
 
-- Identity Core theke tomar manifest pull kore (register er por, ar periodically),
-  `permissions[]` store kore. `GET /permissions` tokhon Identity-r built-in
-  vocabulary + sob registered plugin-er declaration merge kore dey — tai role
-  editor-er picker-e tomar permission dekha jay.
-- `roles[]` template. Plugin jei tenant-e install hoy, sekhane **ordinary custom
-  role** hisebe seed hoy — tenant chaile edit/delete korte parbe. Jei slug tenant-er
-  age thekei ache, seta skip hoy: kono institution nijer role narrow korle
-  reinstall ba redeploy seta undo korbe na.
+- Identity pulls your manifest from Core (after registration, and then
+  periodically) and stores `permissions[]`. `GET /permissions` then merges
+  Identity's built-in vocabulary with every registered plugin's declarations, so
+  your permissions appear in the role editor's picker.
+- `roles[]` are templates. In each tenant the plugin is installed for, they are
+  seeded as **ordinary custom roles** the tenant can edit or delete. A slug the
+  tenant already has is skipped: if an institution narrowed one of its own roles,
+  a reinstall or a redeploy will not undo that.
 
-Keno manifest-e, Identity-r code-e na: ekta Identity binary sob product-e chole.
-School deployment school permission dekhabe, clinic deployment clinic-er — kono
-build tag nai, per-deployment config sync korar dorkar nai. Permission jei code
-seta enforce kore, tar pashei thake.
+Why the manifest rather than Identity's code: one Identity binary serves every
+product. A school deployment offers school permissions, a clinic deployment
+clinic ones — no build tags, no per-deployment config to keep in sync. A
+permission lives next to the code that enforces it.
 
-**Mone rakho:**
+**Keep in mind:**
 
-- `permissions[]` e wildcard cholbe na (`student:*`) — picker-e concrete
-  permission-i thake. `roles[].permissions` e wildcard cholbe.
-- Declare kora mane enforce kora **na**। Enforce korte route-e `permission`
-  field dao (Core gateway-tei 403 dey), ar handler-e `HasPermission` diye
-  re-check koro.
-- Manifest theke ekta permission sorale seta picker theke chole jabe, kintu
-  jara age peyeche tader access ba tenant-er seeded role bhange na.
+- Wildcards are not allowed in `permissions[]` (`student:*`) — the picker holds
+  concrete permissions. Wildcards *are* allowed in `roles[].permissions`.
+- Declaring is **not** enforcing. To enforce, set the route's `permission` field
+  (Core returns 403 at the gateway) and re-check in the handler with
+  `HasPermission`.
+- Removing a permission from the manifest removes it from the picker, but does
+  not break the access of anyone who already holds it, nor a tenant's seeded
+  roles.
 
-Go plugin holo `internal/plugin` runtime-e helper ache:
+Go plugins carrying the `internal/plugin` runtime have helpers:
 
 ```go
 p.DeclarePermissions(
@@ -476,18 +491,218 @@ p.DeclareRoles(plugin.DeclaredRole{
 })
 ```
 
-Onno language-e plugin holo shudhu manifest JSON-e field duita add kore dao।
+In any other language, just add the two fields to the manifest JSON.
+
+---
+
+## Declaring modules (features) — so they can be sold in a plan
+
+A permission answers *may this user act*. A feature answers *does this
+institution have the module at all*. Two different things, and keeping them
+apart is **mandatory**:
+
+| | Permission | Feature (module) |
+|---|---|---|
+| Asks | may this **user** act? | does this **institution** have it? |
+| Scope | per user | per tenant |
+| Decided in | the tenant's own role editor | the Identity console (platform admin) |
+| Decided by | the institution's own owner | you (sales / plan) |
+| Enforced by | Core gateway **and** plugin | **plugin only** |
+| Absent means | "ask your administrator" | "not in your plan" |
+
+What you lose by merging them: "this school never bought the fees module" and
+"this accountant may not collect money" are completely different situations,
+fixed by different people, and need different words on screen.
+
+### 1. Declare in the manifest
+
+```json
+{
+  "name": "billing",
+  "features": [
+    { "key": "invoicing",  "label": "Invoicing",  "group": "Finance" },
+    { "key": "reports",    "label": "Reports",    "group": "Finance" },
+    { "key": "sms_alerts", "label": "SMS alerts", "group": "Comms",
+      "default_enabled": false }
+  ]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `key` | Your plugin's own key. Another plugin may use the same one — Identity qualifies every key as `plugin:key` |
+| `label` | What the console shows. A human sits down to build a price list; `sms_alerts` is not something to put in front of them |
+| `group` | Display grouping in the console (`Finance`, `Academics`) |
+| `default_enabled` | What applies **while no plan lists this feature**. **Omitted = true** |
+
+`default_enabled` defaulting to true is deliberate: declaring features must not
+change anything for institutions already running. Set it `false` only for
+modules that cost real money per use (SMS, payment gateway fees).
+
+### 2. Enforce on your routes
+
+**Core does not enforce features** — unlike permissions. Enforcing them there
+would mean telling Core which routes belong to which module, and that is exactly
+the domain knowledge this architecture keeps out of Core. So this part is
+**yours**.
+
+**Go plugins that carry the runtime copy:** copy `internal/plugin/feature.go`
+from schoolyze-server — it has `DeclaredFeature`, `DeclareFeatures`,
+`HasFeature` and `RequireFeature`. But **that file alone is not enough**; two
+small changes in `plugin.go` go with it:
+
+```go
+// 1) a field on the Plugin struct
+type Plugin struct {
+    // ...
+    declaredFeatures []DeclaredFeature
+}
+
+// 2) emit it in buildManifest() — an empty slice, never nil, because Identity
+//    decodes it as an array
+declaredFeatures := p.declaredFeatures
+if declaredFeatures == nil {
+    declaredFeatures = []DeclaredFeature{}
+}
+return map[string]any{
+    // ...
+    "features": declaredFeatures,
+}
+```
+
+Then use it:
+
+```go
+p.DeclareFeatures(
+    plugin.DeclaredFeature{Key: "invoicing", Label: "Invoicing", Group: "Finance"},
+)
+
+// inside a handler
+if !p.HasFeature(c, "invoicing") { /* 404 */ }
+
+// or as middleware, so one module's routes are guarded in one place
+inv := r.Group("/invoices", p.RequireFeature("invoicing"))
+```
+
+In any other language, read the header and qualify with your own plugin name:
+
+```python
+def has_feature(req, key):
+    feats = req.headers.get("X-ApiCoreX-Features", "").split(",")
+    return f"{PLUGIN_NAME}:{key}" in feats   # without qualifying, another
+                                             # plugin's module reads as yours
+```
+
+**Hiding a menu entry is not enforcement.** Removing an item from the UI stops
+nobody from typing the URL. Do both: filter the menu (a courtesy) and guard the
+routes (the actual enforcement).
+
+### 3. Status codes
+
+- **JSON API → `404`.** A module an institution does not have should look like it
+  does not exist. A `403` tells anyone probing exactly which modules sit behind
+  the door.
+- **Your own panel UI → a page** saying the module is not part of their plan and
+  who to contact. These are the institution's own staff; told "not found" they
+  will report a broken link to support.
+
+### When a feature actually becomes gated — misread this and you will get it wrong
+
+Identity resolves in this order:
+
+```
+1. does the tenant have an override?      → use it
+2. otherwise, does ANY plan list this feature?
+      yes → is it in this tenant's own live plan?
+3. otherwise                              → the plugin's declared default
+```
+
+Step 2 is the important one: **a feature is not gated at all until some plan
+lists it** — until then the declared default applies. Which means:
+
+- Declaring features and deploying today **changes nothing**. Every institution
+  sees exactly what it saw before.
+- A deployment with no billing (a school on its own server) keeps working.
+- Gating begins when you add the module to a plan in the console.
+
+Without that condition, the day you turned this on every module would switch off
+for every tenant — because no plan lists anything yet.
+
+### Who configures it
+
+**Platform admins only**, from the Identity console:
+
+- `Plans → [plan] → Modules` — what the plan includes (the price list)
+- `Tenants → [tenant] → Modules` — what this institution actually sees **and
+  why** (plan / override / default). Set an exception here when you need one (a
+  pilot, a concession), with a reason.
+
+An institution cannot edit its own entitlements — if it could, the price list
+would mean nothing.
+
+A toggle takes about **30 seconds** to take effect: Core caches the introspection
+result. That is the cache, not a bug.
+
+### Turning a feature off ≠ deleting data
+
+Switching a module off hides the screens and touches nothing in the database.
+Switch it back on and everything is where it was. Preserve this property —
+turning a module off is a reversible commercial decision, not a destructive
+operation.
+
+### Checklist for a new plugin
+
+- [ ] Add `features[]` to the manifest (`key`, `label`, `group`)
+- [ ] `default_enabled: false` for metered modules (SMS, gateway fees)
+- [ ] Leave `default_enabled` off everything else (= true), so running
+      deployments do not break
+- [ ] Go: copy `internal/plugin/feature.go` from schoolyze-server **and** add the
+      `declaredFeatures` field plus the `"features"` manifest key in `plugin.go`
+- [ ] Qualify keys with your own plugin name — otherwise you read another
+      plugin's modules as your own
+- [ ] Guard every module's routes (the menu filter is separate, and is not
+      enforcement)
+- [ ] Do **not** declare the product's **core** — the parts without which the
+      product does not work (student list, dashboard, settings). Making those
+      sellable only creates a way to sell something nobody can use
+- [ ] Keep the keys in **one place** (constants); a typo otherwise loses a screen
+
+### Two silent mistakes — catch them with tests
+
+Neither of these shows up anywhere at runtime:
+
+1. **A guard naming a key nobody declared** → that screen is closed for **every
+   institution, forever**. Nothing is logged.
+2. **A declared key nothing enforces** → the console offers it as a sellable
+   module, and selling it does nothing.
+
+So keep the keys in one place, and write a test that holds the "declared" and
+"enforced" lists against each other. Reference:
+`schoolyze-server/cmd/schoolyze/features_test.go`.
+
+### Reference implementation
+
+| What | Where |
+|---|---|
+| Runtime helper (copy this) | `schoolyze-server/internal/plugin/feature.go` |
+| Declaration | `schoolyze-server/cmd/schoolyze/features.go` |
+| Panel guard + menu filter | `schoolyze-server/internal/web/features.go` |
+| Identity's resolution logic | `apicorex-identity/internal/features/` |
+| Identity's design doc | `apicorex-identity/docs/feature-packaging-design.md` |
 
 ---
 
 ## Checklist
 
-- [ ] HTTP server chalu
+- [ ] HTTP server running
 - [ ] `GET /_apicorex/manifest` → valid JSON (name, routes)
 - [ ] `GET /_apicorex/health` → `{"status":"ok"}`
-- [ ] Boot-e `POST /_core/register` (sahi `api_key` soho)
+- [ ] `POST /_core/register` at boot (with the right `api_key`)
 - [ ] (optional) heartbeat loop
-- [ ] Routes manifest-er `routes[]`-er sathe match kore
-- [ ] Tenant context `X-ApiCoreX-*` header theke poro
-- [ ] (optional) `openapi_spec` dao → Scalar UI te full docs
+- [ ] Routes match the manifest's `routes[]`
+- [ ] Tenant context read from the `X-ApiCoreX-*` headers
+- [ ] (optional) `openapi_spec` → full docs in the Scalar UI
+- [ ] (optional) declare `permissions[]` + `roles[]` → they appear in the role editor
+- [ ] (optional) declare `features[]` → sellable in a plan; **do not forget the
+      route guards**, or declaring them means nothing
 ```
