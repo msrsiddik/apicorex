@@ -12,6 +12,12 @@ pipeline {
     // defaults. Fill one in via "Build with Parameters" to override just that
     // value for this run.
     parameters {
+        // Picks which Jenkins agent the Deploy stage runs on, so one job can
+        // target dev, staging, or prod just by switching this value. Dashboard,
+        // Vet, Test and Build always run on whichever agent `agent any` picks
+        // at the top of the pipeline — only Deploy re-pins to this one. Label
+        // the corresponding agent under Manage Jenkins > Nodes.
+        choice(name: 'TARGET_SERVER', choices: ['dev-server', 'staging-server', 'prod-server'], description: 'Jenkins agent/node to deploy to.')
         string(name: 'CORE_PORT', defaultValue: '', description: 'Host+container port for Core (compose default: 9999)')
         string(name: 'POSTGRES_PORT', defaultValue: '', description: 'Host port for shared Postgres (compose default: 15432)')
         string(name: 'POSTGRES_USER', defaultValue: '', description: 'compose default: apicorex')
@@ -71,9 +77,15 @@ pipeline {
             // Builds the image and (re)starts the container via compose, which
             // also owns the shared Postgres + Redis every plugin depends on.
             //
+            // Runs on whichever agent TARGET_SERVER names, not wherever the
+            // earlier stages happened to land — Jenkins re-checks out the repo
+            // on that node automatically because this stage declares its own
+            // agent, so the compose build below always has the source it needs.
+            //
             // Every param above passes through as an env var; docker-compose.yml's
             // ${VAR:-default} falls back to its own default when the param was
             // left blank, so an untouched build behaves exactly as before.
+            agent { label params.TARGET_SERVER }
             environment {
                 CORE_PORT = "${params.CORE_PORT}"
                 POSTGRES_PORT = "${params.POSTGRES_PORT}"
