@@ -99,8 +99,9 @@ func NewIntrospector(reg baseURLLookup, pluginKey string) *Introspector {
 }
 
 type introspectRequest struct {
-	TokenHash    string `json:"token_hash"`
-	ActingUserID string `json:"acting_user_id"`
+	TokenHash     string `json:"token_hash"`
+	ActingUserID  string `json:"acting_user_id"`
+	PlatformToken string `json:"platform_token,omitempty"`
 }
 
 // Resolve turns a token hash + optional acting user into the request Identity.
@@ -130,6 +131,69 @@ func (i *Introspector) Resolve(ctx context.Context, tokenHash, actingUserID stri
 		i.mu.Unlock()
 	}
 	return id, err
+}
+
+// ResolvePlatform resolves a self-contained PLATFORM_SECRET session token
+// (Identity's zps_... prefix). Unlike Resolve, the RAW token — not a hash —
+// travels to Identity: there is no DB row behind it to protect, since the
+// token's own HMAC signature and embedded expiry are what Identity verifies.
+func (i *Introspector) ResolvePlatform(ctx context.Context, rawToken string) (*Identity, error) {
+	key := "platform|" + rawToken
+
+	i.mu.Lock()
+	if e, ok := i.cache[key]; ok && time.Now().Before(e.exp) {
+		i.mu.Unlock()
+		return e.id, e.err
+	}
+	i.mu.Unlock()
+
+	id, err := i.fetchPlatform(ctx, rawToken)
+	if !errors.Is(err, ErrUnavailable) {
+		i.mu.Lock()
+		now := time.Now()
+		for k, e := range i.cache {
+			if now.After(e.exp) {
+				delete(i.cache, k)
+			}
+		}
+		i.cache[key] = cacheEntry{id: id, err: err, exp: now.Add(cacheTTL)}
+		i.mu.Unlock()
+	}
+	return id, err
+}
+
+func (i *Introspector) fetchPlatform(ctx context.Context, rawToken string) (*Identity, error) {
+	baseURL, ok := i.reg.GetBaseURL("identity")
+	if !ok {
+		return nil, ErrUnavailable
+	}
+	body, _ := json.Marshal(introspectRequest{PlatformToken: rawToken})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		strings.TrimRight(baseURL, "/")+"/internal/introspect", bytes.NewReader(body))
+	if err != nil {
+		return nil, ErrUnavailable
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Plugin-Key", i.pluginKey)
+
+	resp, err := i.client.Do(req)
+	if err != nil {
+		return nil, ErrUnavailable
+	}
+	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		var id Identity
+		if err := json.NewDecoder(resp.Body).Decode(&id); err != nil {
+			return nil, ErrUnavailable
+		}
+		return &id, nil
+	case http.StatusUnauthorized:
+		return nil, ErrInvalidToken
+	default:
+		return nil, ErrUnavailable
+	}
 }
 
 func (i *Introspector) fetch(ctx context.Context, tokenHash, actingUserID string) (*Identity, error) {

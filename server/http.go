@@ -123,7 +123,7 @@ func NewHTTP(
 	})
 
 	// gateway dashboard — embedded Next.js SPA. The static assets are public;
-	// the SPA itself gates on DASHBOARD_SECRET via its own login screen, and
+	// the SPA itself gates on APICOREX_SECRET via its own login screen, and
 	// its write actions are session-token gated (see controlplane admin routes).
 	// /plugin is the SPA's plugins-tab page, client-side-routed to its own URL
 	// (see admin/app/page.tsx) — it's the same index.html, just requested

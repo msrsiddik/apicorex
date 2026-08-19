@@ -156,7 +156,7 @@ All via environment variables (secrets never hardcoded):
 | `HTTP_PORT` | `:8080` | HTTP listen address |
 | `PLUGIN_API_KEY` | — | Shared key plugins present on register; also authenticates Core to Identity's `/internal/introspect` (unset disables auth — dev only) |
 | `PLUGIN_ALLOWLIST` | empty | Comma-separated plugin names allowed to register (empty = allow any, dev) |
-| `DASHBOARD_SECRET` | empty | Login key for the embedded gateway dashboard (`/dashboard`) and `/docs`; unset disables the login form (dev only — open access) |
+| `APICOREX_SECRET` | empty | Login key for the embedded gateway dashboard (`/dashboard`) and `/docs`; unset disables the login form (dev only — open access) |
 | `CORS_ALLOWED_ORIGINS` | empty | Comma-separated browser origins allowed to call Core; empty = any origin (dev only) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | empty | Enables OpenTelemetry tracing (e.g. Jaeger) |
 | `CONFIG_FILE` | empty | YAML for per-plugin rate/limit overrides — see [config.example.yaml](./config.example.yaml) |
@@ -192,8 +192,8 @@ compose default) for changing a deploy (e.g. the port) without touching code.
 | everything else | device token* | Proxied to the owning plugin (*unless the route is public) |
 
 > `/docs` and the dashboard share one login: `POST /_core/admin/login` with
-> `DASHBOARD_SECRET` issues a signed session (cookie for browser navigation,
-> bearer token for the SPA's own API calls). Unset `DASHBOARD_SECRET` and both
+> `APICOREX_SECRET` issues a signed session (cookie for browser navigation,
+> bearer token for the SPA's own API calls). Unset `APICOREX_SECRET` and both
 > are open — the default for local dev.
 
 ---

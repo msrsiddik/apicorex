@@ -18,6 +18,7 @@ pipeline {
         // at the top of the pipeline — only Deploy re-pins to this one. Label
         // the corresponding agent under Manage Jenkins > Nodes.
         choice(name: 'TARGET_SERVER', choices: ['dev-server', 'staging-server', 'prod-server'], description: 'Jenkins agent/node to deploy to.')
+        booleanParam(name: 'DEPLOY_OWN_POSTGRES', defaultValue: true, description: 'Also start the shared Postgres container (docker-compose.yml\'s "postgres" service). Turn off when plugins should point at a Postgres that already runs elsewhere — Core itself never touches the database either way.')
         string(name: 'CORE_PORT', defaultValue: '', description: 'Host+container port for Core (compose default: 9999)')
         string(name: 'POSTGRES_PORT', defaultValue: '', description: 'Host port for shared Postgres (compose default: 15432)')
         string(name: 'POSTGRES_USER', defaultValue: '', description: 'compose default: apicorex')
@@ -33,7 +34,7 @@ pipeline {
         string(name: 'HEALTH_INTERVAL', defaultValue: '', description: 'compose default: 30s')
         password(name: 'POSTGRES_PASSWORD', defaultValue: '', description: 'compose default: apicorex')
         password(name: 'PLUGIN_API_KEY', defaultValue: '', description: 'Shared secret with plugins (compose default: change-me-plugin-key)')
-        password(name: 'DASHBOARD_SECRET', defaultValue: '', description: 'compose default: change-me-dashboard-key')
+        password(name: 'APICOREX_SECRET', defaultValue: '', description: 'compose default: apicorex-secret')
     }
 
     environment {
@@ -87,6 +88,7 @@ pipeline {
             // left blank, so an untouched build behaves exactly as before.
             agent { label params.TARGET_SERVER }
             environment {
+                DEPLOY_OWN_POSTGRES = "${params.DEPLOY_OWN_POSTGRES}"
                 CORE_PORT = "${params.CORE_PORT}"
                 POSTGRES_PORT = "${params.POSTGRES_PORT}"
                 POSTGRES_USER = "${params.POSTGRES_USER}"
@@ -102,10 +104,22 @@ pipeline {
                 HEALTH_INTERVAL = "${params.HEALTH_INTERVAL}"
                 POSTGRES_PASSWORD = "${params.POSTGRES_PASSWORD}"
                 PLUGIN_API_KEY = "${params.PLUGIN_API_KEY}"
-                DASHBOARD_SECRET = "${params.DASHBOARD_SECRET}"
+                APICOREX_SECRET = "${params.APICOREX_SECRET}"
             }
             steps {
-                sh 'docker compose up -d --build'
+                sh '''
+                    set -eu
+                    PROFILE_ARGS=""
+                    if [ "$DEPLOY_OWN_POSTGRES" = "true" ]; then
+                        PROFILE_ARGS="--profile with-postgres"
+                    fi
+                    docker compose $PROFILE_ARGS up -d --build
+
+                    if [ "$DEPLOY_OWN_POSTGRES" = "true" ]; then
+                        echo "Postgres connection URL for the plugin repos (password omitted — it is a Jenkins secret parameter):"
+                        echo "postgres://${POSTGRES_USER:-apicorex}:<POSTGRES_PASSWORD>@host.docker.internal:${POSTGRES_PORT:-15432}/${POSTGRES_DB:-apicorex}?sslmode=disable"
+                    fi
+                '''
             }
         }
     }

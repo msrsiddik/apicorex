@@ -53,11 +53,21 @@ func Auth(introspector *auth.Introspector) gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing authorization header"})
 			return
 		}
-		if !strings.HasPrefix(tokenStr, "zdt_") {
+		var (
+			id  *auth.Identity
+			err error
+		)
+		switch {
+		case strings.HasPrefix(tokenStr, "zps_"):
+			// A PLATFORM_SECRET session: self-verifying, no tenant/user — sent
+			// raw, not hashed (see Introspector.ResolvePlatform).
+			id, err = introspector.ResolvePlatform(c.Request.Context(), tokenStr)
+		case strings.HasPrefix(tokenStr, "zdt_"):
+			id, err = introspector.Resolve(c.Request.Context(), auth.HashToken(tokenStr), c.GetHeader(HeaderActingUser))
+		default:
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
 			return
 		}
-		id, err := introspector.Resolve(c.Request.Context(), auth.HashToken(tokenStr), c.GetHeader(HeaderActingUser))
 		switch {
 		case errors.Is(err, auth.ErrMembershipRevoked):
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "membership revoked"})
@@ -92,11 +102,23 @@ func OptionalAuth(introspector *auth.Introspector) gin.HandlerFunc {
 			return
 		}
 		tokenStr, ok := deviceToken(c)
-		if !ok || !strings.HasPrefix(tokenStr, "zdt_") {
+		if !ok {
 			c.Next()
 			return
 		}
-		id, err := introspector.Resolve(c.Request.Context(), auth.HashToken(tokenStr), c.GetHeader(HeaderActingUser))
+		var (
+			id  *auth.Identity
+			err error
+		)
+		switch {
+		case strings.HasPrefix(tokenStr, "zps_"):
+			id, err = introspector.ResolvePlatform(c.Request.Context(), tokenStr)
+		case strings.HasPrefix(tokenStr, "zdt_"):
+			id, err = introspector.Resolve(c.Request.Context(), auth.HashToken(tokenStr), c.GetHeader(HeaderActingUser))
+		default:
+			c.Next()
+			return
+		}
 		if err == nil {
 			c.Set(identityKey, id)
 		}

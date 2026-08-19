@@ -22,24 +22,24 @@ import (
 )
 
 type Handlers struct {
-	reg           *registry.Registry
-	disp          *dispatcher.Dispatcher
-	injector      *openapi.Injector
-	apiKey        string
-	allowlist     map[string]bool // empty = allow any (dev)
-	signer        *tokenSigner
-	dashSecret    string
-	sessionSigner *tokenSigner
-	client        *http.Client
+	reg            *registry.Registry
+	disp           *dispatcher.Dispatcher
+	injector       *openapi.Injector
+	apiKey         string
+	allowlist      map[string]bool // empty = allow any (dev)
+	signer         *tokenSigner
+	apicorexSecret string
+	sessionSigner  *tokenSigner
+	client         *http.Client
 }
 
 // New builds the control-plane handlers. allowlist is the set of plugin names
 // permitted to register (empty slice = allow any, for dev). The signer secret
-// should be a strong secret (reuse JWT_SECRET or a dedicated one). dashSecret
+// should be a strong secret (reuse JWT_SECRET or a dedicated one). apicorexSecret
 // gates the gateway dashboard's login (a single shared key, not a
 // username/password pair) — empty means login is disabled (dev only),
 // matching the rest of Core's dev-mode posture.
-func New(reg *registry.Registry, disp *dispatcher.Dispatcher, injector *openapi.Injector, apiKey string, allowlist []string, signerSecret, dashSecret string) *Handlers {
+func New(reg *registry.Registry, disp *dispatcher.Dispatcher, injector *openapi.Injector, apiKey string, allowlist []string, signerSecret, apicorexSecret string) *Handlers {
 	al := make(map[string]bool, len(allowlist))
 	for _, n := range allowlist {
 		if n = strings.TrimSpace(n); n != "" {
@@ -47,21 +47,21 @@ func New(reg *registry.Registry, disp *dispatcher.Dispatcher, injector *openapi.
 		}
 	}
 	return &Handlers{
-		reg:        reg,
-		disp:       disp,
-		injector:   injector,
-		apiKey:     apiKey,
-		allowlist:  al,
-		signer:     newTokenSigner(signerSecret, 24*time.Hour),
-		dashSecret: dashSecret,
-		// Derived from dashSecret, not signerSecret: the two are independent
-		// env vars (PLUGIN_API_KEY vs DASHBOARD_SECRET), and PLUGIN_API_KEY may
+		reg:            reg,
+		disp:           disp,
+		injector:       injector,
+		apiKey:         apiKey,
+		allowlist:      al,
+		signer:         newTokenSigner(signerSecret, 24*time.Hour),
+		apicorexSecret: apicorexSecret,
+		// Derived from apicorexSecret, not signerSecret: the two are independent
+		// env vars (PLUGIN_API_KEY vs APICOREX_SECRET), and PLUGIN_API_KEY may
 		// be unset in dev. If it were reused here, an unset PLUGIN_API_KEY would
 		// make the HMAC key a fixed, source-visible string (":dashboard"),
-		// letting anyone forge session tokens even with DASHBOARD_SECRET set.
-		// When dashSecret is itself empty, requireSession no-ops regardless of
+		// letting anyone forge session tokens even with APICOREX_SECRET set.
+		// When apicorexSecret is itself empty, requireSession no-ops regardless of
 		// signature validity, so a weak/guessable key here is harmless.
-		sessionSigner: newTokenSigner(dashSecret+":session", 12*time.Hour),
+		sessionSigner: newTokenSigner(apicorexSecret+":session", 12*time.Hour),
 		client:        &http.Client{Timeout: 10 * time.Second},
 	}
 }
@@ -76,15 +76,15 @@ func (h *Handlers) Mount(engine *gin.Engine) {
 
 	// dashboard login — unauthenticated by definition (this is where a session
 	// starts). /login-required lets the frontend know whether to show a login
-	// form at all (dev instances with no DASHBOARD_SECRET set skip it).
+	// form at all (dev instances with no APICOREX_SECRET set skip it).
 	g.GET("/admin/login-required", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"required": h.dashSecret != ""})
+		c.JSON(http.StatusOK, gin.H{"required": h.apicorexSecret != ""})
 	})
 	g.POST("/admin/login", h.login)
 	g.POST("/admin/logout", h.logout)
 
 	// operator actions from the gateway dashboard — gated by a session token
-	// from /admin/login. Login disabled (dashSecret == "") means these are
+	// from /admin/login. Login disabled (apicorexSecret == "") means these are
 	// open, matching the rest of Core's dev-mode posture.
 	admin := g.Group("/admin", h.requireSession)
 	admin.GET("/session", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
@@ -99,7 +99,7 @@ func (h *Handlers) Mount(engine *gin.Engine) {
 // without any custom header.
 const sessionCookieName = "apicorex_session"
 
-// login validates the dashboard secret key against DASHBOARD_SECRET and
+// login validates the dashboard secret key against APICOREX_SECRET and
 // issues a signed session token.
 func (h *Handlers) login(c *gin.Context) {
 	var req struct {
@@ -109,14 +109,14 @@ func (h *Handlers) login(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
 		return
 	}
-	if h.dashSecret == "" {
+	if h.apicorexSecret == "" {
 		// login disabled (dev) — issue a token anyway so the frontend flow works
 		token := h.sessionSigner.issue("dev")
 		h.setSessionCookie(c, token)
 		c.JSON(http.StatusOK, gin.H{"token": token})
 		return
 	}
-	if subtle.ConstantTimeCompare([]byte(req.Key), []byte(h.dashSecret)) != 1 {
+	if subtle.ConstantTimeCompare([]byte(req.Key), []byte(h.apicorexSecret)) != 1 {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid key"})
 		return
 	}
@@ -152,7 +152,7 @@ func (h *Handlers) setSessionCookie(c *gin.Context, token string) {
 // header, since these are pages the browser navigates to or fetches
 // same-origin rather than an API client attaching its own headers.
 func (h *Handlers) RequireDashboardSession(c *gin.Context) {
-	if h.dashSecret == "" {
+	if h.apicorexSecret == "" {
 		c.Next()
 		return
 	}
@@ -170,7 +170,7 @@ func (h *Handlers) RequireDashboardSession(c *gin.Context) {
 
 // requireSession checks the Bearer session token from /admin/login.
 func (h *Handlers) requireSession(c *gin.Context) {
-	if h.dashSecret == "" {
+	if h.apicorexSecret == "" {
 		c.Next()
 		return
 	}

@@ -36,7 +36,7 @@ services:
     environment:
       HTTP_PORT: ":9999"
       PLUGIN_API_KEY: change-me-plugin-key
-      DASHBOARD_SECRET: change-me-dashboard-key
+      APICOREX_SECRET: apicorex-secret
       # PLUGIN_ALLOWLIST: identity,sync
       # Comma-separated origins allowed to call Core from a browser. Empty =
       # no restriction (dev only).
