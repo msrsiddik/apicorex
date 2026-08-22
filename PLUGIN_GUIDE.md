@@ -171,6 +171,44 @@ break in the next one. Read the header.
 
 ---
 
+## Money — integer, smallest unit, always
+
+**Store every amount as an integer in the currency's smallest unit.** Never a
+float, never `NUMERIC`, never a decimal string that gets parsed on the way in.
+
+In these deployments that unit is the **poisha** — 1 BDT = 100 poisha — and the
+convention is to say so in the column name:
+
+```sql
+amount_poisha  BIGINT NOT NULL DEFAULT 0
+total_poisha   BIGINT NOT NULL DEFAULT 0
+salary_poisha  BIGINT NOT NULL DEFAULT 0
+```
+
+`BIGINT`, not `INTEGER`: a signed 32-bit column tops out around 21 million taka
+once you are counting poisha, which an institution's yearly turnover reaches
+without being remarkable.
+
+Why this is a platform rule rather than each plugin's taste:
+
+- **Floats do not hold money.** `0.1 + 0.2` is not `0.3`, and a fee ledger built
+  on that produces drift that surfaces months later as a reconciliation nobody
+  can close. The error is small, silent, and cumulative — the worst combination.
+- **Two modules that disagree cannot be added up.** Once several modules collect
+  and spend money, their totals have to reconcile against one ledger. A module
+  storing taka-as-decimal and another storing poisha-as-integer will agree on
+  every screen and disagree on the trial balance.
+- **The name carries the unit.** `amount` alone invites the next person to write
+  `500` meaning five hundred taka into a column holding poisha. `amount_poisha`
+  makes that read wrong at the call site.
+
+Round only when you display, and round in one place. If your module divides an
+amount — splitting a fee across heads, prorating a month — decide explicitly
+where the remaining poisha goes, and write it down next to the code. An
+unallocated remainder is how a total stops matching its parts.
+
+---
+
 ## Streaming, file upload/download, WebSocket
 
 Core is a streaming reverse proxy, so none of this needs extra work:
@@ -732,7 +770,9 @@ So keep the keys in one place, and write a test that holds the "declared" and
 - [ ] `POST /_core/register` at boot (with the right `api_key`)
 - [ ] (optional) heartbeat loop
 - [ ] Routes match the manifest's `routes[]`
-- [ ] Tenant context read from the `X-ApiCoreX-*` headers
+- [ ] Tenant context read from the `X-ApiCoreX-*` headers — including
+      `X-ApiCoreX-Schema`, which is **your** schema, not the tenant's
+- [ ] Every amount an integer in the smallest currency unit (`*_poisha BIGINT`)
 - [ ] (optional) `openapi_spec` → full docs in the Scalar UI
 - [ ] (optional) declare `permissions[]` + `roles[]` → they appear in the role editor
 - [ ] (optional) declare `features[]` → sellable in a plan; **do not forget the
