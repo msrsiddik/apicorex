@@ -9,15 +9,24 @@ import (
 // Tenant context headers Core injects into proxied requests after resolving the
 // device token + acting user through Identity.
 const (
-	HeaderTenantID    = "X-ApiCoreX-Tenant-ID"
-	HeaderTenantSlug  = "X-ApiCoreX-Tenant-Slug"
-	HeaderSchema      = "X-ApiCoreX-Schema"
-	HeaderBranchID    = "X-ApiCoreX-Branch-ID"
-	HeaderBranchSlug  = "X-ApiCoreX-Branch-Slug"
-	HeaderUserID      = "X-ApiCoreX-User-ID"
-	HeaderUserType    = "X-ApiCoreX-User-Type"
-	HeaderRoles       = "X-ApiCoreX-Roles"
-	HeaderPermissions = "X-ApiCoreX-Permissions"
+	HeaderTenantID   = "X-ApiCoreX-Tenant-ID"
+	HeaderTenantSlug = "X-ApiCoreX-Tenant-Slug"
+	HeaderSchema     = "X-ApiCoreX-Schema"
+	// HeaderTenantSchema carries the tenant's BASE schema (tenant_<slug>),
+	// alongside HeaderSchema's per-plugin one.
+	//
+	// A plugin needs it to call another plugin. Schema-per-plugin means the
+	// caller's own schema name is useless to the callee — schoolyze telling
+	// accounting "tenant_acme__schoolyze" names a schema accounting cannot read
+	// and has no tables in. What travels between plugins has to be the tenant,
+	// and the callee derives its own schema from it.
+	HeaderTenantSchema = "X-ApiCoreX-Tenant-Schema"
+	HeaderBranchID     = "X-ApiCoreX-Branch-ID"
+	HeaderBranchSlug   = "X-ApiCoreX-Branch-Slug"
+	HeaderUserID       = "X-ApiCoreX-User-ID"
+	HeaderUserType     = "X-ApiCoreX-User-Type"
+	HeaderRoles        = "X-ApiCoreX-Roles"
+	HeaderPermissions  = "X-ApiCoreX-Permissions"
 	// HeaderFeatures carries the tenant's enabled plugin modules, qualified as
 	// "plugin:key". Resolved per TENANT, not per user: permissions say whether
 	// this person may act, features say whether the institution has the module
@@ -31,7 +40,7 @@ const (
 )
 
 var apicorexHeaders = []string{
-	HeaderTenantID, HeaderTenantSlug, HeaderSchema,
+	HeaderTenantID, HeaderTenantSlug, HeaderSchema, HeaderTenantSchema,
 	HeaderBranchID, HeaderBranchSlug,
 	HeaderUserID, HeaderUserType, HeaderRoles, HeaderPermissions, HeaderFeatures,
 	HeaderRequestID, HeaderTokenHash,
@@ -71,6 +80,9 @@ func InjectTenantHeaders(c *gin.Context, schema string) {
 	h.Set(HeaderTenantID, id.TenantID)
 	h.Set(HeaderTenantSlug, id.TenantSlug)
 	h.Set(HeaderSchema, schema)
+	// The tenant's own schema, for plugin-to-plugin calls — see the header's
+	// definition above.
+	h.Set(HeaderTenantSchema, id.SchemaName)
 	h.Set(HeaderBranchID, id.BranchID)
 	h.Set(HeaderBranchSlug, id.BranchSlug)
 	h.Set(HeaderUserID, id.UserID)
