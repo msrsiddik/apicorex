@@ -1,12 +1,33 @@
+# air live-reload config for Core. Run `make dev` (not bare `air`) — the make
+# target loads .env.dev first, which puts this on :19999 as a second stack beside
+# the deployed containers on :9999.
+
+root = "."
+tmp_dir = "tmp"
+
 [build]
   cmd = "go build -o ./tmp/apicorex ./cmd/apicorex"
-  entrypoint = "./tmp/apicorex"
+  # `bin`, not `entrypoint`: air has no `entrypoint` key, so the previous config
+  # silently fell back to its default ./tmp/main and never ran what it built.
+  bin = "./tmp/apicorex"
+  # Coalesce rapid saves: wait this long (ms) after a change before building.
   delay = 1000
-  exclude_dir = ["tmp", "vendor"]
-  include_ext = ["go", "toml", "env"]
-  exclude_file = []
-  kill_delay = "2s"
+  # env so editing .env.dev restarts with the new values; html/css/js so a
+  # rebuilt admin bundle does too — cmd/apicorex/dashboard.go embeds admin/out,
+  # which means a new dashboard needs a new binary.
+  include_ext = ["go", "toml", "env", "html", "css", "js"]
+  # node_modules and .next churn constantly during an admin build and are not
+  # embedded; admin/out is, so it stays watched.
+  exclude_dir = ["tmp", "vendor", "bin", "gen", "docs", "proto", "cmd/apicorex/admin/node_modules", "cmd/apicorex/admin/.next"]
+  exclude_regex = ["_test\\.go"]
+  exclude_unchanged = true
+  # SIGINT rather than SIGKILL: main.go installs signal.NotifyContext, and Core
+  # closes its listener on the way out. kill_delay gives that a chance to finish.
+  send_interrupt = true
+  kill_delay = "3s"
   rerun_delay = 500
+  # A failed build doesn't drop the loop; the next good save rebuilds.
+  stop_on_error = false
 
 [log]
   time = true

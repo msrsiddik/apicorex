@@ -22,6 +22,30 @@ Before adding a document to this repo, ask whether a competitor would be pleased
 to find it. Note that deleting a file later does **not** remove it from public
 git history — the check has to happen before the commit, not after.
 
+## Running locally
+
+`make dev` runs the service under [air](https://github.com/air-verse/air): it
+rebuilds and restarts on every save, loading `.env.dev` first. Install air once
+with `go install github.com/air-verse/air@latest`.
+
+**The dev stack is a second stack, not a replacement.** The deployed containers
+keep Core on `:9999`, Identity on `:50051` and Schoolyze on `:50053`; the dev
+stack runs beside them on `:19999`, `:50151` and `:50153`, against its own
+database.
+
+They cannot be mixed. Core evicts any existing registration for a plugin name
+(`internal/controlplane/handlers.go`), which is what makes hot reload clean — a
+restart replaces its own entry instead of accumulating duplicates. It also means
+a dev plugin pointed at the deployed Core evicts the deployed instance, whose
+heartbeat then 404s and re-registers, evicting the dev one, forever. So run a dev
+plugin against the dev Core only.
+
+`.env.dev` is gitignored and holds a real database password; `.env.dev.example`
+is the committed copy. The values in `.env` are for the container build and use
+`host.docker.internal`, which does not resolve on the host — do not reuse them.
+
+`make dev` needs no database — Core has none.
+
 ## Branching and release flow
 
 ```

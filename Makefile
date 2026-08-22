@@ -1,4 +1,4 @@
-.PHONY: proto build test run
+.PHONY: proto build test run dev
 
 proto:
 	protoc \
@@ -15,3 +15,12 @@ test:
 
 run:
 	go run cmd/apicorex/main.go
+
+# dev runs Core under air, rebuilding and restarting on every save.
+#
+# .env.dev puts it on :19999 with its own plugin key, so it is a second stack
+# beside the deployed one on :9999 rather than a replacement for it. Both can run
+# at once; a plugin belongs to exactly one of them.
+dev:
+	@test -f .env.dev || (echo "no .env.dev — copy .env.dev.example and fill it in"; exit 1)
+	@set -a; . ./.env.dev; set +a; air
