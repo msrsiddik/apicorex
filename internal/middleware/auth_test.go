@@ -75,7 +75,14 @@ func authTestRig(t *testing.T, srvURL string) (*gin.Engine, *http.Header) {
 	r.Use(StripSpoofedHeaders())
 	r.Use(Auth(intro))
 	r.GET("/x", func(c *gin.Context) {
-		InjectTenantHeaders(c)
+		// The rig stands in for Dispatch, which derives the per-plugin schema
+		// before injecting. These tests assert on the other headers, so the
+		// tenant's base schema is the honest stand-in here.
+		schema := ""
+		if id := IdentityFrom(c); id != nil {
+			schema = id.SchemaName
+		}
+		InjectTenantHeaders(c, schema)
 		*captured = c.Request.Header.Clone()
 		c.Status(http.StatusOK)
 	})

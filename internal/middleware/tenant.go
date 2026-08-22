@@ -55,7 +55,13 @@ func StripSpoofedHeaders() gin.HandlerFunc {
 // User-ID is the ACTING user. The client's X-Acting-User header is deleted
 // after consumption — plugins only ever see the trusted headers. No-op when
 // the request is unauthenticated (public routes).
-func InjectTenantHeaders(c *gin.Context) {
+//
+// schema is the schema this particular plugin owns, which the caller derives
+// from the plugin's manifest — see dispatcher.Dispatch. It is passed in rather
+// than read from the identity because the identity carries the tenant's base
+// schema and is cached across plugins, while this header is per-plugin: the same
+// token proxied to two plugins must name two different schemas.
+func InjectTenantHeaders(c *gin.Context, schema string) {
 	id := IdentityFrom(c)
 	if id == nil {
 		return
@@ -64,7 +70,7 @@ func InjectTenantHeaders(c *gin.Context) {
 	h.Del(HeaderActingUser)
 	h.Set(HeaderTenantID, id.TenantID)
 	h.Set(HeaderTenantSlug, id.TenantSlug)
-	h.Set(HeaderSchema, id.SchemaName)
+	h.Set(HeaderSchema, schema)
 	h.Set(HeaderBranchID, id.BranchID)
 	h.Set(HeaderBranchSlug, id.BranchSlug)
 	h.Set(HeaderUserID, id.UserID)

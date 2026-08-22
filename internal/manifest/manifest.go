@@ -30,6 +30,10 @@ type DomainSurface struct {
 	PathPrefix string `json:"path_prefix"`
 }
 
+// TenantSchemaShared is the TenantSchema value that asks Core for the tenant's
+// base schema instead of a schema of the plugin's own.
+const TenantSchemaShared = "shared"
+
 // Manifest is the document Core pulls from a plugin's /_apicorex/manifest.
 type Manifest struct {
 	Name           string          `json:"name"`
@@ -41,6 +45,25 @@ type Manifest struct {
 	DomainSurfaces []DomainSurface `json:"domain_surfaces,omitempty"`
 	Migrations     []Migration     `json:"migrations,omitempty"`
 	OpenAPISpec    json.RawMessage `json:"openapi_spec,omitempty"`
+
+	// TenantSchema says which Postgres schema this plugin's tenant-scoped tables
+	// live in, and so which schema Core names in X-ApiCoreX-Schema when it
+	// proxies a request.
+	//
+	//   "own" (default, and what an omitted field means) — the plugin owns
+	//     tenant_<slug>__<name>, a schema nothing else can reach. This is what
+	//     stops one domain plugin reading another's tables: not a rule in a
+	//     document, but a schema its database role has no grant on.
+	//
+	//   "shared" — the plugin is handed the tenant's base schema, tenant_<slug>.
+	//     Reserved for the platform itself: Identity owns that schema and the
+	//     tenant record that names it. A domain plugin declaring this is asking
+	//     for the very thing the split exists to prevent.
+	//
+	// Core neither knows nor cares which plugin is which — it reads this field.
+	// That is the point: the alternative was a plugin name hardcoded in Core,
+	// which is how a gateway starts learning domain.
+	TenantSchema string `json:"tenant_schema,omitempty"`
 
 	// Permissions and Roles are the plugin's declared RBAC vocabulary. Core does
 	// not interpret them — it enforces the per-route `permission` above and

@@ -407,7 +407,17 @@ func (d *Dispatcher) Dispatch(c *gin.Context) {
 	}
 
 	// inject trusted tenant headers (claims set by auth middleware; nil for public routes)
-	middleware.InjectTenantHeaders(c)
+	//
+	// The schema is derived per plugin, not taken from the identity: the identity
+	// carries the tenant's base schema, and each plugin owns a schema of its own
+	// under it. Deriving it here — the one place Core knows both the tenant and
+	// which plugin the request is going to — is what keeps a plugin's database
+	// role unable to name another plugin's tables.
+	schema := ""
+	if id := middleware.IdentityFrom(c); id != nil {
+		schema = manifest.TenantSchemaFor(id.SchemaName, plugin, pluginEntry.Manifest.TenantSchema)
+	}
+	middleware.InjectTenantHeaders(c, schema)
 
 	tenantID := c.Request.Header.Get(middleware.HeaderTenantID)
 

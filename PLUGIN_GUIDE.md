@@ -131,7 +131,7 @@ After resolving the device token (by calling Identity's `/internal/introspect`),
 |--------|---------|
 | `X-ApiCoreX-Tenant-ID` | Tenant ID (e.g. `t_acme`) |
 | `X-ApiCoreX-Tenant-Slug` | Tenant slug (e.g. `acme`) |
-| `X-ApiCoreX-Schema` | Tenant Postgres schema (e.g. `tenant_acme`) |
+| `X-ApiCoreX-Schema` | **Your plugin's** Postgres schema for this tenant (e.g. `tenant_acme__billing`) — see below |
 | `X-ApiCoreX-User-ID` | Authenticated user ID |
 | `X-ApiCoreX-User-Type` | `platform` \| `customer` \| `both` |
 | `X-ApiCoreX-Branch-ID` | Branch the device token is scoped to |
@@ -148,6 +148,26 @@ Do not confuse the last two — the whole module system rests on the difference:
   identical for every user of that tenant.
 
 On a public route (auth skipped) these headers are absent — check for empty values in your handler.
+
+### `X-ApiCoreX-Schema` is yours alone
+
+Set your `search_path` from this header and never construct a schema name
+yourself. It is not the tenant's schema — it is *your* schema for that tenant,
+`tenant_<slug>__<your plugin name>`, and every plugin proxied the same request
+receives a different one.
+
+Two things follow, and the second is the point:
+
+- **Your tables are yours.** Your migrations run there; nothing else is in it.
+- **Another plugin's tables are unreachable.** Not discouraged — unreachable.
+  A deployment that has created the per-plugin database roles gives your
+  connection no `USAGE` on any other schema, so a query naming one is refused by
+  Postgres. There is no arrangement under which you read another plugin's tables;
+  if you need its data, that is a contract it has to expose, or a sign the module
+  boundary is in the wrong place.
+
+Deriving the name yourself will appear to work in a single-plugin deployment and
+break in the next one. Read the header.
 
 ---
 
@@ -415,7 +435,19 @@ POST /plugins/install   (Identity plugin route, auth required)
 { "tenant_id": "t_acme", "plugin_name": "billing" }
 ```
 
-Identity pulls your manifest from Core (`GET /_core/plugins/billing/manifest`), takes `migrations[]` and runs them in the `tenant_acme` schema. When a new tenant registers, the migrations of every installed plugin run automatically.
+Identity pulls your manifest from Core (`GET /_core/plugins/billing/manifest`), takes `migrations[]` and runs them in **your** schema for that tenant — `tenant_acme__billing`, created on first install. When a new tenant registers, the migrations of every installed plugin run automatically, each into its own schema.
+
+Write your DDL unqualified (`CREATE TABLE students (...)`, not
+`CREATE TABLE tenant_acme.students (...)`). Identity sets `search_path` for the
+transaction; a schema name written into your SQL targets the wrong one.
+
+### `tenant_schema` — do not set it
+
+The manifest field `tenant_schema` selects which schema you are given. Omit it,
+and you get your own, which is what every plugin wants. The only other value is
+`"shared"`, which asks for the tenant's base schema; it exists for Identity,
+which owns that schema and the tenant record naming it. A domain plugin setting
+it is asking for exactly what the separation prevents.
 
 **Uninstall** — controlled by the `drop_data` flag:
 ```
