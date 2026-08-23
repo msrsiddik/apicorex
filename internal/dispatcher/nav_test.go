@@ -70,30 +70,53 @@ func TestBuildNavHidesWhatTheUserCannotOpen(t *testing.T) {
 }
 
 func TestBuildNavHonoursWildcardPermissions(t *testing.T) {
-	// "student:*" is the shape the RBAC vocabulary already uses, and a menu that
-	// ignored it would hide entries from someone who plainly has them.
+	// The shapes the RBAC vocabulary actually uses. "*:*" is the owner's grant,
+	// and a matcher of our own missed it — the merged menu came back with one
+	// entry for a user who can open everything, which is how this was found.
 	all := []*registry.PluginEntry{plugin("schoolyze", true,
 		item("students", "/school/students", perm("student:read")),
 		item("fees", "/school/fees", perm("fee:read")),
 	)}
 	if got := keys(buildNav(all, []string{"student:*"}, nil)); got != "schoolyze/students" {
-		t.Fatalf("wildcard: got %q", got)
+		t.Fatalf("resource wildcard: got %q", got)
 	}
-	if got := len(buildNav(all, []string{"*"}, nil)); got != 2 {
-		t.Fatalf("full grant showed %d of 2", got)
+	if got := len(buildNav(all, []string{"*:*"}, nil)); got != 2 {
+		t.Fatalf("owner grant showed %d of 2", got)
 	}
 }
 
 func TestBuildNavHidesModulesTheTenantHasNotBought(t *testing.T) {
 	all := []*registry.PluginEntry{plugin("schoolyze", true,
 		item("students", "/school/students"),
-		item("cards", "/school/cards", feat("schoolyze:cards")),
+		item("cards", "/school/cards", feat("cards")),
 	)}
 	if got := keys(buildNav(all, nil, nil)); got != "schoolyze/students" {
 		t.Fatalf("without the feature: got %q", got)
 	}
 	if got := len(buildNav(all, nil, []string{"schoolyze:cards"})); got != 2 {
 		t.Fatalf("with the feature: got %d of 2", got)
+	}
+}
+
+func TestBuildNavQualifiesFeatureKeysByPlugin(t *testing.T) {
+	// A plugin writing "attendance" is the natural thing, and the features
+	// header carries "schoolyze:attendance". Core scopes the key rather than
+	// asking every plugin to remember — eight of eleven entries disappeared from
+	// the merged menu for a tenant that had every one of those modules.
+	unqualified := []*registry.PluginEntry{plugin("schoolyze", true,
+		item("attendance", "/school/attendance", feat("attendance")))}
+	if got := len(buildNav(unqualified, nil, []string{"schoolyze:attendance"})); got != 1 {
+		t.Fatalf("unqualified key matched %d entries, want 1", got)
+	}
+	// A plugin that qualifies its own is redundant rather than wrong.
+	qualified := []*registry.PluginEntry{plugin("schoolyze", true,
+		item("attendance", "/school/attendance", feat("schoolyze:attendance")))}
+	if got := len(buildNav(qualified, nil, []string{"schoolyze:attendance"})); got != 1 {
+		t.Fatalf("qualified key matched %d entries, want 1", got)
+	}
+	// And another plugin's module does not unlock this one's entry.
+	if got := len(buildNav(unqualified, nil, []string{"accounting:attendance"})); got != 0 {
+		t.Fatalf("another plugin's feature matched %d entries", got)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/msrsiddik/apicorex/internal/middleware"
 	"github.com/msrsiddik/apicorex/internal/registry"
 )
 
@@ -51,7 +52,6 @@ type navEntry struct {
 // someone cannot use beats advertising it, which is the rule the panels already
 // follow for their own menus.
 func buildNav(plugins []*registry.PluginEntry, perms, features []string) []navEntry {
-	permSet := setOf(perms)
 	featureSet := setOf(features)
 
 	var out []navEntry
@@ -65,10 +65,23 @@ func buildNav(plugins []*registry.PluginEntry, perms, features []string) []navEn
 			if item.Href == "" || item.Key == "" {
 				continue
 			}
-			if item.Permission != "" && !permitted(permSet, item.Permission) {
+			// middleware.PermissionAllowed rather than a comparison of our own:
+			// it is the matcher the gateway already enforces routes with, and
+			// it knows the wildcard forms the RBAC vocabulary actually uses.
+			// A hand-rolled version here missed "*:*" — the owner's grant — so
+			// the merged menu came back with one entry for a user who can open
+			// everything.
+			if !middleware.PermissionAllowed(perms, item.Permission) {
 				continue
 			}
-			if item.Feature != "" && !featureSet[item.Feature] {
+			// A feature key is scoped to the plugin that declares it, and the
+			// features header carries them qualified — "schoolyze:attendance".
+			// Core qualifies here rather than asking each plugin to, because a
+			// plugin declaring "attendance" unqualified is the natural thing to
+			// write and was exactly what happened: eight of Schoolyze's eleven
+			// entries vanished from the merged menu for a tenant that had every
+			// one of those modules.
+			if item.Feature != "" && !featureSet[qualify(p.Info.PluginName, item.Feature)] {
 				continue
 			}
 			out = append(out, navEntry{
@@ -134,16 +147,16 @@ func encodeNav(entries []navEntry) string {
 	return encoded
 }
 
-// permitted reports whether a permission is granted, honouring the "resource:*"
-// wildcards the RBAC vocabulary already uses.
-func permitted(granted map[string]bool, want string) bool {
-	if granted[want] || granted["*"] {
-		return true
+// qualify scopes a feature key to its plugin, unless the plugin already did.
+//
+// Tolerating both spellings because a plugin that qualifies its own keys is not
+// wrong, just redundant, and failing it silently would hide the module rather
+// than the mistake.
+func qualify(pluginName, feature string) string {
+	if strings.Contains(feature, ":") {
+		return feature
 	}
-	if i := strings.Index(want, ":"); i > 0 {
-		return granted[want[:i]+":*"]
-	}
-	return false
+	return pluginName + ":" + feature
 }
 
 func setOf(values []string) map[string]bool {
