@@ -11,6 +11,9 @@ import (
 const (
 	HeaderTenantID   = "X-ApiCoreX-Tenant-ID"
 	HeaderTenantSlug = "X-ApiCoreX-Tenant-Slug"
+	// HeaderTenantName and HeaderBranchName are display names for a panel's
+	// header; the slugs beside them identify, and are not meant to be read.
+	HeaderTenantName = "X-ApiCoreX-Tenant-Name"
 	HeaderSchema     = "X-ApiCoreX-Schema"
 	// HeaderTenantSchema carries the tenant's BASE schema (tenant_<slug>),
 	// alongside HeaderSchema's per-plugin one.
@@ -28,10 +31,14 @@ const (
 	// Core has no design language and should not acquire one. Absent when there
 	// is nothing to send, or when it would not fit — a plugin that gets no
 	// header falls back to its own menu.
-	HeaderNav         = "X-ApiCoreX-Nav"
-	HeaderBranchID    = "X-ApiCoreX-Branch-ID"
-	HeaderBranchSlug  = "X-ApiCoreX-Branch-Slug"
-	HeaderUserID      = "X-ApiCoreX-User-ID"
+	HeaderNav        = "X-ApiCoreX-Nav"
+	HeaderBranchID   = "X-ApiCoreX-Branch-ID"
+	HeaderBranchSlug = "X-ApiCoreX-Branch-Slug"
+	HeaderBranchName = "X-ApiCoreX-Branch-Name"
+	HeaderUserID     = "X-ApiCoreX-User-ID"
+	// HeaderUserName is the acting user's name, for a panel's header. Without
+	// it a panel can only show the id, which is what every panel did.
+	HeaderUserName    = "X-ApiCoreX-User-Name"
 	HeaderUserType    = "X-ApiCoreX-User-Type"
 	HeaderRoles       = "X-ApiCoreX-Roles"
 	HeaderPermissions = "X-ApiCoreX-Permissions"
@@ -50,7 +57,8 @@ const (
 var apicorexHeaders = []string{
 	HeaderTenantID, HeaderTenantSlug, HeaderSchema, HeaderTenantSchema, HeaderNav,
 	HeaderBranchID, HeaderBranchSlug,
-	HeaderUserID, HeaderUserType, HeaderRoles, HeaderPermissions, HeaderFeatures,
+	HeaderTenantName, HeaderBranchName,
+	HeaderUserID, HeaderUserName, HeaderUserType, HeaderRoles, HeaderPermissions, HeaderFeatures,
 	HeaderRequestID, HeaderTokenHash,
 }
 
@@ -96,7 +104,16 @@ func InjectTenantHeaders(c *gin.Context, schema, nav string) {
 	}
 	h.Set(HeaderBranchID, id.BranchID)
 	h.Set(HeaderBranchSlug, id.BranchSlug)
+	if id.TenantName != "" {
+		h.Set(HeaderTenantName, id.TenantName)
+	}
+	if id.BranchName != "" {
+		h.Set(HeaderBranchName, id.BranchName)
+	}
 	h.Set(HeaderUserID, id.UserID)
+	if id.FullName != "" {
+		h.Set(HeaderUserName, id.FullName)
+	}
 	h.Set(HeaderUserType, id.UserType)
 	h.Set(HeaderRoles, strings.Join(id.Roles, ","))
 	h.Set(HeaderPermissions, strings.Join(id.Permissions, ","))

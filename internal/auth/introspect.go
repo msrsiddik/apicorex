@@ -38,12 +38,18 @@ const cacheTTL = 30 * time.Second
 // headers: tenant/branch scope from the device token, user/roles/permissions
 // from the ACTING user (fresh from Identity's DB).
 type Identity struct {
-	TenantID    string   `json:"tenant_id"`
-	TenantSlug  string   `json:"tenant_slug"`
-	SchemaName  string   `json:"schema_name"`
-	BranchID    string   `json:"branch_id,omitempty"`
-	BranchSlug  string   `json:"branch_slug,omitempty"`
-	UserID      string   `json:"user_id"`
+	TenantID   string `json:"tenant_id"`
+	TenantSlug string `json:"tenant_slug"`
+	TenantName string `json:"tenant_name,omitempty"`
+	SchemaName string `json:"schema_name"`
+	BranchID   string `json:"branch_id,omitempty"`
+	BranchSlug string `json:"branch_slug,omitempty"`
+	BranchName string `json:"branch_name,omitempty"`
+	UserID     string `json:"user_id"`
+	// FullName is who the acting user is, for a panel's header. Identity has
+	// always returned it; Core did not carry it, so every panel showed the raw
+	// id — "u_d6372ffa" where a person's name belongs.
+	FullName    string   `json:"full_name,omitempty"`
 	UserType    string   `json:"user_type"`
 	Roles       []string `json:"roles"`
 	Permissions []string `json:"permissions"`
