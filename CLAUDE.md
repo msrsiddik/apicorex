@@ -30,8 +30,8 @@ with `go install github.com/air-verse/air@latest`.
 
 **The dev stack is a second stack, not a replacement.** The deployed containers
 keep Core on `:9999`, Identity on `:50051` and Schoolyze on `:50053`; the dev
-stack runs beside them on `:19999`, `:50151` and `:50153`, against its own
-database.
+stack runs beside them on `:19999`, `:50151`, `:50153` and — since Accounting
+joined — `:50155`, against its own database.
 
 They cannot be mixed. Core evicts any existing registration for a plugin name
 (`internal/controlplane/handlers.go`), which is what makes hot reload clean — a
@@ -52,6 +52,15 @@ is the committed copy. The values in `.env` are for the container build and use
   feature branch ──▶ develop ──▶ staging ──▶ main
                      (work)      (verify)    (released)
 ```
+
+**Which repos this applies to.** The four deployed services — `apicorex`,
+`apicorex-identity-private`, `schoolyze-server`, `apicorex-accounting`. The two
+platform *modules* — `apicorex-plugin-go` and `apicorex-ui` — are libraries, not
+deployments: they live on `main` and are released by tag. Nothing verifies them
+on a staging environment because nothing deploys them; their consumers do that.
+A change to either is only real to Docker and CI once it is **tagged**, since
+those build with `GOWORK=off` and resolve the published version rather than the
+sibling checkout `go.work` points at.
 
 **`develop` is where all work happens.** Branch from it, merge back into it.
 Never commit directly to `main`, and never start a feature branch from `main` —
