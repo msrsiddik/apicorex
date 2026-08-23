@@ -34,6 +34,51 @@ type DomainSurface struct {
 // base schema instead of a schema of the plugin's own.
 const TenantSchemaShared = "shared"
 
+// NavItem is one entry in the suite's sidebar.
+type NavItem struct {
+	// Key identifies the entry within its plugin. Plugin name plus key is what
+	// makes it unique across the suite, so two plugins may both have "reports".
+	Key string `json:"key"`
+
+	// Labels is the entry's text per locale ("bn", "en"), already translated.
+	//
+	// Not a translation key, which is what this first looked like it should be.
+	// A key is only meaningful to the catalogue that defines it, and a plugin
+	// cannot read another plugin's catalogue — Schoolyze asked to render
+	// "nav.accounts" would show the raw key. Nor can Core translate: it holds no
+	// catalogue and learning to would be Core learning what a label is.
+	//
+	// So the translated strings travel, and the plugin rendering the menu picks
+	// the locale it is rendering in. The cost is that a plugin must ship its nav
+	// labels in every locale the suite supports, and adding a locale means every
+	// plugin declaring it — which is the honest price of nobody owning everyone
+	// else's words.
+	Labels map[string]string `json:"labels"`
+
+	// Icon is a Lucide icon name, resolved by whatever renders the menu.
+	Icon string `json:"icon,omitempty"`
+
+	// Href is the path Core proxies, including the plugin's own prefix.
+	Href string `json:"href"`
+
+	// Permission hides the entry from a user who could not open it anyway.
+	// Empty means any authenticated user of the tenant.
+	Permission string `json:"permission,omitempty"`
+
+	// Feature hides the entry when the tenant's plan does not include the
+	// module. Empty means always shown.
+	Feature string `json:"feature,omitempty"`
+
+	// Group and Sort order the union. Entries sort by Group, then Sort, then
+	// plugin name — so a plugin controls where its own entries sit relative to
+	// each other, and cannot reorder anyone else's.
+	//
+	// Not a perfect answer to "who decides the order of the sections", and
+	// better than a configuration file nobody maintains.
+	Group string `json:"group,omitempty"`
+	Sort  int    `json:"sort,omitempty"`
+}
+
 // Manifest is the document Core pulls from a plugin's /_apicorex/manifest.
 type Manifest struct {
 	Name           string          `json:"name"`
@@ -64,6 +109,15 @@ type Manifest struct {
 	// That is the point: the alternative was a plugin name hardcoded in Core,
 	// which is how a gateway starts learning domain.
 	TenantSchema string `json:"tenant_schema,omitempty"`
+
+	// Nav is this plugin's sidebar entries, for the merged menu.
+	//
+	// Core collects them from every plugin a tenant has, filters by what the
+	// user may actually open, and injects the union as a header — so each
+	// plugin renders one menu covering the whole suite instead of its own
+	// island. Core reads the fields it filters and orders by and interprets
+	// nothing else.
+	Nav []NavItem `json:"nav,omitempty"`
 
 	// Permissions and Roles are the plugin's declared RBAC vocabulary. Core does
 	// not interpret them — it enforces the per-route `permission` above and

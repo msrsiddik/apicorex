@@ -82,7 +82,9 @@ func authTestRig(t *testing.T, srvURL string) (*gin.Engine, *http.Header) {
 		if id := IdentityFrom(c); id != nil {
 			schema = id.SchemaName
 		}
-		InjectTenantHeaders(c, schema)
+		// No nav: this rig stands in for Dispatch, and these tests assert on
+		// the tenant headers rather than the menu.
+		InjectTenantHeaders(c, schema, "")
 		*captured = c.Request.Header.Clone()
 		c.Status(http.StatusOK)
 	})

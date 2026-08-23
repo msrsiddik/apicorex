@@ -414,10 +414,18 @@ func (d *Dispatcher) Dispatch(c *gin.Context) {
 	// which plugin the request is going to — is what keeps a plugin's database
 	// role unable to name another plugin's tables.
 	schema := ""
+	nav := ""
 	if id := middleware.IdentityFrom(c); id != nil {
 		schema = manifest.TenantSchemaFor(id.SchemaName, plugin, pluginEntry.Manifest.TenantSchema)
+		// The suite's menu, assembled here for the same reason the schema is:
+		// this is the one place that knows both the caller and every plugin.
+		// Only for requests a person is making — an API client has no sidebar,
+		// and encoding one onto every proxied call would be work nobody reads.
+		if wantsNav(c) {
+			nav = encodeNav(buildNav(d.reg.List(), id.Permissions, id.Features))
+		}
 	}
-	middleware.InjectTenantHeaders(c, schema)
+	middleware.InjectTenantHeaders(c, schema, nav)
 
 	tenantID := c.Request.Header.Get(middleware.HeaderTenantID)
 
@@ -523,4 +531,16 @@ func (d *Dispatcher) proxyWebSocket(c *gin.Context, entry *registry.PluginEntry)
 	go func() { _, e := io.Copy(pluginConn, clientConn); errc <- e }()
 	go func() { _, e := io.Copy(clientConn, pluginConn); errc <- e }()
 	<-errc
+}
+
+// wantsNav reports whether this request is a page a person will look at.
+//
+// Same test as the login redirect, and for the same reason: guessing from user
+// agents would be a rule nobody could predict. A plugin serving HTML asks for
+// HTML.
+func wantsNav(c *gin.Context) bool {
+	if c.Request.Method != http.MethodGet {
+		return false
+	}
+	return strings.Contains(c.Request.Header.Get("Accept"), "text/html")
 }

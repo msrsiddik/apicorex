@@ -21,12 +21,20 @@ const (
 	// and has no tables in. What travels between plugins has to be the tenant,
 	// and the callee derives its own schema from it.
 	HeaderTenantSchema = "X-ApiCoreX-Tenant-Schema"
-	HeaderBranchID     = "X-ApiCoreX-Branch-ID"
-	HeaderBranchSlug   = "X-ApiCoreX-Branch-Slug"
-	HeaderUserID       = "X-ApiCoreX-User-ID"
-	HeaderUserType     = "X-ApiCoreX-User-Type"
-	HeaderRoles        = "X-ApiCoreX-Roles"
-	HeaderPermissions  = "X-ApiCoreX-Permissions"
+	// HeaderNav carries the suite's merged sidebar, base64-encoded JSON.
+	//
+	// Assembled by Core because it is the only party that knows which plugins a
+	// tenant has and what this user may open; rendered by the plugin because
+	// Core has no design language and should not acquire one. Absent when there
+	// is nothing to send, or when it would not fit — a plugin that gets no
+	// header falls back to its own menu.
+	HeaderNav         = "X-ApiCoreX-Nav"
+	HeaderBranchID    = "X-ApiCoreX-Branch-ID"
+	HeaderBranchSlug  = "X-ApiCoreX-Branch-Slug"
+	HeaderUserID      = "X-ApiCoreX-User-ID"
+	HeaderUserType    = "X-ApiCoreX-User-Type"
+	HeaderRoles       = "X-ApiCoreX-Roles"
+	HeaderPermissions = "X-ApiCoreX-Permissions"
 	// HeaderFeatures carries the tenant's enabled plugin modules, qualified as
 	// "plugin:key". Resolved per TENANT, not per user: permissions say whether
 	// this person may act, features say whether the institution has the module
@@ -40,7 +48,7 @@ const (
 )
 
 var apicorexHeaders = []string{
-	HeaderTenantID, HeaderTenantSlug, HeaderSchema, HeaderTenantSchema,
+	HeaderTenantID, HeaderTenantSlug, HeaderSchema, HeaderTenantSchema, HeaderNav,
 	HeaderBranchID, HeaderBranchSlug,
 	HeaderUserID, HeaderUserType, HeaderRoles, HeaderPermissions, HeaderFeatures,
 	HeaderRequestID, HeaderTokenHash,
@@ -70,7 +78,7 @@ func StripSpoofedHeaders() gin.HandlerFunc {
 // than read from the identity because the identity carries the tenant's base
 // schema and is cached across plugins, while this header is per-plugin: the same
 // token proxied to two plugins must name two different schemas.
-func InjectTenantHeaders(c *gin.Context, schema string) {
+func InjectTenantHeaders(c *gin.Context, schema, nav string) {
 	id := IdentityFrom(c)
 	if id == nil {
 		return
@@ -83,6 +91,9 @@ func InjectTenantHeaders(c *gin.Context, schema string) {
 	// The tenant's own schema, for plugin-to-plugin calls — see the header's
 	// definition above.
 	h.Set(HeaderTenantSchema, id.SchemaName)
+	if nav != "" {
+		h.Set(HeaderNav, nav)
+	}
 	h.Set(HeaderBranchID, id.BranchID)
 	h.Set(HeaderBranchSlug, id.BranchSlug)
 	h.Set(HeaderUserID, id.UserID)
