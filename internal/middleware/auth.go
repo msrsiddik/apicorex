@@ -7,6 +7,7 @@ package middleware
 import (
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -43,6 +44,20 @@ const HeaderActingUser = "X-Acting-User"
 // with the optional X-Acting-User header; the resulting Identity is stored on
 // the context for IdentityFrom. A nil introspector disables auth (dev only).
 func Auth(introspector *auth.Introspector) gin.HandlerFunc {
+	return AuthWithLogin(introspector, "")
+}
+
+// AuthWithLogin is Auth, plus somewhere to send a browser that is not signed in.
+//
+// Without loginURL an unauthenticated request gets 401 JSON whatever asked for
+// it — correct for an API client and wrong for a person, who sees
+// {"error":"missing authorization header"} where a login form belongs. That is
+// what a browser gets today from any plugin panel that has not built a login of
+// its own, which is every panel except Schoolyze's.
+//
+// Empty keeps exactly today's behaviour, so a deployment that sets nothing is
+// unaffected.
+func AuthWithLogin(introspector *auth.Introspector, loginURL string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if introspector == nil {
 			c.Next()
@@ -50,7 +65,7 @@ func Auth(introspector *auth.Introspector) gin.HandlerFunc {
 		}
 		tokenStr, ok := deviceToken(c)
 		if !ok {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing authorization header"})
+			rejectUnauthenticated(c, loginURL, "missing authorization header")
 			return
 		}
 		var (
@@ -65,15 +80,15 @@ func Auth(introspector *auth.Introspector) gin.HandlerFunc {
 		case strings.HasPrefix(tokenStr, "zdt_"):
 			id, err = introspector.Resolve(c.Request.Context(), auth.HashToken(tokenStr), c.GetHeader(HeaderActingUser))
 		default:
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+			rejectUnauthenticated(c, loginURL, "invalid token")
 			return
 		}
 		switch {
 		case errors.Is(err, auth.ErrMembershipRevoked):
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "membership revoked"})
+			rejectUnauthenticated(c, loginURL, "membership revoked")
 			return
 		case errors.Is(err, auth.ErrInvalidToken):
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+			rejectUnauthenticated(c, loginURL, "invalid token")
 			return
 		case err != nil:
 			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "auth unavailable"})
@@ -149,4 +164,35 @@ func IdentityFrom(c *gin.Context) *auth.Identity {
 	v, _ := c.Get(identityKey)
 	id, _ := v.(*auth.Identity)
 	return id
+}
+
+// rejectUnauthenticated answers a signed-out request.
+//
+// A browser is sent to the login and back afterwards; anything else gets the
+// JSON it can act on. The distinction is deliberately not clever — Accept
+// containing text/html and nothing more. A client that asks for HTML and is
+// handed a redirect to an HTML page has been answered honestly, and guessing
+// from user agents or cookies would be a rule nobody could predict.
+func rejectUnauthenticated(c *gin.Context, loginURL, reason string) {
+	if loginURL != "" && wantsHTML(c.Request) {
+		// Where they were going, so the login can return them. Path and query
+		// only: a full URL here would let a crafted link bounce a user to
+		// another site after signing in, and Core has no business sending
+		// anyone off its own origin.
+		next := c.Request.URL.RequestURI()
+		c.Redirect(http.StatusSeeOther, loginURL+"?next="+url.QueryEscape(next))
+		c.Abort()
+		return
+	}
+	c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": reason})
+}
+
+// wantsHTML reports whether this looks like a person in a browser.
+func wantsHTML(r *http.Request) bool {
+	// Only GET and HEAD. Redirecting a POST loses its body and lands the user
+	// on a login having silently dropped whatever they submitted.
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return false
+	}
+	return strings.Contains(r.Header.Get("Accept"), "text/html")
 }

@@ -154,7 +154,14 @@ func NewHTTP(
 	// classified correctly by the time IsPublic looks at its path.
 	engine.Use(resolveCustomDomain(disp, domainResolver))
 
-	authMiddleware := middleware.Auth(introspector)
+	// Where to send a browser that is not signed in. Empty keeps the JSON 401
+	// every unauthenticated request gets today, so a deployment that sets
+	// nothing is unaffected — and one that sets it stops handing people
+	// {"error":"missing authorization header"} where a login form belongs.
+	//
+	// A path on this origin, not a URL: Core redirecting to another host is
+	// something a crafted link could abuse, and there is no reason for it.
+	authMiddleware := middleware.AuthWithLogin(introspector, os.Getenv("LOGIN_URL"))
 	optionalAuthMiddleware := middleware.OptionalAuth(introspector)
 	engine.Use(func(c *gin.Context) {
 		p := c.Request.URL.Path
