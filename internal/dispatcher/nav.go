@@ -43,6 +43,14 @@ type navEntry struct {
 	Icon   string            `json:"icon,omitempty"`
 	Href   string            `json:"href"`
 	Group  string            `json:"group,omitempty"`
+	// GroupLabels lets the renderer put a heading over each product's run. A
+	// merged menu without them is a flat list in which a ledger entry sits
+	// directly under a school's dashboard with nothing marking the boundary.
+	GroupLabels map[string]string `json:"group_labels,omitempty"`
+	// groupSort orders this entry's group against the others. Lowercase: it
+	// decides the order here and is of no interest to the renderer, which is
+	// handed the list already sorted.
+	groupSort int
 }
 
 // buildNav collects the entries this user may open, across every plugin.
@@ -85,20 +93,31 @@ func buildNav(plugins []*registry.PluginEntry, perms, features []string) []navEn
 				continue
 			}
 			out = append(out, navEntry{
-				Plugin: p.Info.PluginName,
-				Key:    item.Key,
-				Labels: item.Labels,
-				Icon:   item.Icon,
-				Href:   item.Href,
-				Group:  item.Group,
+				Plugin:      p.Info.PluginName,
+				Key:         item.Key,
+				Labels:      item.Labels,
+				Icon:        item.Icon,
+				Href:        item.Href,
+				Group:       item.Group,
+				GroupLabels: item.GroupLabels,
+				groupSort:   item.GroupSort,
 			})
 		}
 	}
 
-	// Group, then the plugin's own ordering within it, then plugin name so the
-	// result is stable — an unstable menu reorders itself between page loads.
+	// Declared group order first, then group name, then the plugin's own
+	// ordering within the group, then plugin name so the result is stable — an
+	// unstable menu reorders itself between page loads.
+	//
+	// Group name only breaks a tie between equal GroupSort values. Leading with
+	// it, as this did, is alphabetical order dressed as a decision: it put the
+	// ledger above the school's dashboard because "accounting" sorts before
+	// "schoolyze", which is not a fact about either product.
 	sort.SliceStable(out, func(i, j int) bool {
 		a, b := out[i], out[j]
+		if a.groupSort != b.groupSort {
+			return a.groupSort < b.groupSort
+		}
 		if a.Group != b.Group {
 			return a.Group < b.Group
 		}

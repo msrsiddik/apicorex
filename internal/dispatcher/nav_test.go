@@ -35,6 +35,14 @@ func feat(f string) func(*manifest.NavItem)  { return func(n *manifest.NavItem) 
 func group(g string) func(*manifest.NavItem) { return func(n *manifest.NavItem) { n.Group = g } }
 func order(i int) func(*manifest.NavItem)    { return func(n *manifest.NavItem) { n.Sort = i } }
 
+func groupOrder(i int) func(*manifest.NavItem) {
+	return func(n *manifest.NavItem) { n.GroupSort = i }
+}
+
+func groupLabel(l string) func(*manifest.NavItem) {
+	return func(n *manifest.NavItem) { n.GroupLabels = map[string]string{"en": l} }
+}
+
 func keys(entries []navEntry) string {
 	var out []string
 	for _, e := range entries {
@@ -204,5 +212,49 @@ func TestEncodeNavDropsAMenuTooBigForAHeader(t *testing.T) {
 func TestEncodeNavEmptyIsEmpty(t *testing.T) {
 	if encodeNav(nil) != "" {
 		t.Fatal("an empty menu produced a header")
+	}
+}
+
+func TestBuildNavPutsGroupsInTheirDeclaredOrder(t *testing.T) {
+	// The case this exists for: alphabetically "accounting" precedes
+	// "schoolyze", so the ledger's entries sat above the school's dashboard —
+	// an order nobody chose and no user could infer.
+	all := []*registry.PluginEntry{
+		plugin("accounting", true,
+			item("accounts", "/accounting/accounts", group("accounting"), groupOrder(10)),
+		),
+		plugin("schoolyze", true,
+			item("dashboard", "/school/", group("schoolyze"), groupOrder(0)),
+		),
+	}
+	want := "schoolyze/dashboard accounting/accounts"
+	for i := 0; i < 5; i++ {
+		if got := keys(buildNav(all, nil, nil)); got != want {
+			t.Fatalf("run %d: got %q, want %q", i, got, want)
+		}
+	}
+}
+
+func TestBuildNavCarriesGroupLabels(t *testing.T) {
+	// The renderer draws the heading and cannot translate it — Core holds no
+	// catalogue — so the words have to travel with the entry.
+	got := buildNav([]*registry.PluginEntry{
+		plugin("accounting", true,
+			item("accounts", "/accounting/accounts", group("accounting"), groupLabel("Accounting")),
+		),
+	}, nil, nil)
+	if len(got) != 1 || got[0].GroupLabels["en"] != "Accounting" {
+		t.Fatalf("got %+v", got)
+	}
+	var decoded []navEntry
+	raw, err := base64.StdEncoding.DecodeString(encodeNav(got))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded[0].GroupLabels["en"] != "Accounting" {
+		t.Fatalf("label did not survive the header: %+v", decoded[0])
 	}
 }

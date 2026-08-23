@@ -77,6 +77,18 @@ type NavItem struct {
 	// better than a configuration file nobody maintains.
 	Group string `json:"group,omitempty"`
 	Sort  int    `json:"sort,omitempty"`
+
+	// GroupLabels names the group per locale, for the heading a merged sidebar
+	// puts above the run. Same reason the entry labels travel: nothing
+	// downstream holds this plugin's catalogue, and Core holds none at all.
+	GroupLabels map[string]string `json:"group_labels,omitempty"`
+
+	// GroupSort orders this group against other plugins'. Lower first.
+	//
+	// Without it groups fall in alphabetical order, which is an accident:
+	// "accounting" precedes "schoolyze", so the ledger's three entries sat
+	// above the school's dashboard for no reason a user could infer.
+	GroupSort int `json:"group_sort,omitempty"`
 }
 
 // Manifest is the document Core pulls from a plugin's /_apicorex/manifest.
