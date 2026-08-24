@@ -18,6 +18,11 @@ pipeline {
         // at the top of the pipeline — only Deploy re-pins to this one. Label
         // the corresponding agent under Manage Jenkins > Nodes.
         choice(name: 'TARGET_SERVER', choices: ['dev-server', 'staging-server', 'prod-server'], description: 'Jenkins agent/node to deploy to.')
+        // Off by default since this job builds `develop`. A build is worth
+        // running for Checks and Test on every commit; deploying is a decision,
+        // and the branch being built is the one work lands on. Tick it, with
+        // TARGET_SERVER, for the build that is meant to ship.
+        booleanParam(name: 'DEPLOY', defaultValue: false, description: 'Build the image and (re)start the container on TARGET_SERVER. Off means verify only.')
         booleanParam(name: 'DEPLOY_OWN_POSTGRES', defaultValue: true, description: 'Also start the shared Postgres container (docker-compose.yml\'s "postgres" service). Turn off when plugins should point at a Postgres that already runs elsewhere — Core itself never touches the database either way.')
         string(name: 'CORE_PORT', defaultValue: '', description: 'Host+container port for Core (compose default: 9999)')
         string(name: 'POSTGRES_PORT', defaultValue: '', description: 'Host port for shared Postgres (compose default: 15432)')
@@ -89,6 +94,14 @@ pipeline {
             // Every param above passes through as an env var; docker-compose.yml's
             // ${VAR:-default} falls back to its own default when the param was
             // left blank, so an untouched build behaves exactly as before.
+            // beforeAgent, or Jenkins allocates the node and clones the repo
+            // onto it before deciding not to deploy — which, with TARGET_SERVER
+            // set to prod-server, means occupying the production agent to do
+            // nothing.
+            when {
+                beforeAgent true
+                expression { params.DEPLOY }
+            }
             agent { label params.TARGET_SERVER }
             environment {
                 DEPLOY_OWN_POSTGRES = "${params.DEPLOY_OWN_POSTGRES}"
