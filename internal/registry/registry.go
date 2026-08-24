@@ -42,11 +42,14 @@ type PluginEntry struct {
 type Registry struct {
 	mu      sync.RWMutex
 	plugins map[string]*PluginEntry // keyed by plugin_id
+	// maint holds the plugins that are up but must not be reached, keyed by
+	// name rather than id. See maintenance.go.
+	maint *maintenanceStore
 }
 
 // New returns an empty Registry.
 func New() *Registry {
-	return &Registry{plugins: make(map[string]*PluginEntry)}
+	return &Registry{plugins: make(map[string]*PluginEntry), maint: newMaintenanceStore()}
 }
 
 // Register stores a plugin and builds its reverse proxy. proxyFor is a factory

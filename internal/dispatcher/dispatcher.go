@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -363,6 +364,26 @@ func (d *Dispatcher) Dispatch(c *gin.Context) {
 	if !ok || !pluginEntry.Alive {
 		protection.RequestsRejected.WithLabelValues(plugin, "unavailable").Inc()
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "plugin unavailable"})
+		return
+	}
+
+	// Maintenance: the plugin is up, and must not be reached.
+	//
+	// Structural work on its tables is only safe with nothing serving requests
+	// against them, and the alternative — stopping the plugin — costs its
+	// registration and, with hot reload, starts an eviction fight. Checked
+	// before the rate limiter and the bulkhead deliberately: a request that is
+	// going to be refused should not first spend anyone's budget.
+	if w, inMaintenance := d.reg.MaintenanceFor(plugin); inMaintenance {
+		protection.RequestsRejected.WithLabelValues(plugin, "maintenance").Inc()
+		// Retry-After in seconds, from the window's own expiry, so a client
+		// backs off for as long as this will actually last rather than guessing.
+		c.Header("Retry-After", strconv.Itoa(int(time.Until(w.Until).Seconds())+1))
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error":  "plugin under maintenance",
+			"reason": w.Reason,
+			"until":  w.Until.UTC().Format(time.RFC3339),
+		})
 		return
 	}
 

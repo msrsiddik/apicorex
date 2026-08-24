@@ -73,6 +73,11 @@ func (h *Handlers) Mount(engine *gin.Engine) {
 	g.POST("/heartbeat", h.heartbeat)
 	g.POST("/deregister", h.deregister)
 	g.GET("/plugins/:name/manifest", h.pluginManifest)
+	// Maintenance windows. Authenticated with the same shared plugin key as
+	// register/heartbeat: the caller is Identity, doing structural work on a
+	// plugin's tables, not a person at a dashboard.
+	g.POST("/maintenance", h.setMaintenance)
+	g.GET("/maintenance", h.listMaintenance)
 
 	// dashboard login — unauthenticated by definition (this is where a session
 	// starts). /login-required lets the frontend know whether to show a login
@@ -90,6 +95,58 @@ func (h *Handlers) Mount(engine *gin.Engine) {
 	admin.GET("/session", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
 	admin.POST("/plugins/:id/reset-breaker", h.resetBreaker)
 	admin.POST("/plugins/:id/deregister", h.adminDeregister)
+}
+
+// maintenanceReq opens or closes a window on one plugin.
+type maintenanceReq struct {
+	APIKey  string `json:"api_key"`
+	Plugin  string `json:"plugin"`
+	On      bool   `json:"on"`
+	Reason  string `json:"reason"`
+	Seconds int    `json:"seconds"`
+}
+
+// setMaintenance makes a plugin answer 503 without stopping it.
+//
+// Opening a window is how a structural migration keeps requests off the tables
+// it is moving. Stopping the plugin would do the same and cost its
+// registration — and with hot reload in play, a restart mid-migration would
+// re-register and start serving again halfway through.
+//
+// A window always expires (see registry.maxMaintenance), so a caller that dies
+// holding one leaves a plugin unavailable for minutes rather than forever.
+func (h *Handlers) setMaintenance(c *gin.Context) {
+	var req maintenanceReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		return
+	}
+	if h.apiKey != "" && req.APIKey != h.apiKey {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid api key"})
+		return
+	}
+	if req.Plugin == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "plugin required"})
+		return
+	}
+	if !req.On {
+		h.reg.ClearMaintenance(req.Plugin)
+		log.Printf("[controlplane] maintenance cleared for %s", req.Plugin)
+		c.JSON(http.StatusOK, gin.H{"plugin": req.Plugin, "on": false})
+		return
+	}
+	w := h.reg.SetMaintenance(req.Plugin, req.Reason, time.Duration(req.Seconds)*time.Second)
+	log.Printf("[controlplane] maintenance on for %s until %s: %s",
+		req.Plugin, w.Until.Format(time.RFC3339), req.Reason)
+	c.JSON(http.StatusOK, gin.H{"plugin": req.Plugin, "on": true, "window": w})
+}
+
+// listMaintenance reports the open windows.
+//
+// Unauthenticated on purpose: it says only that a plugin is unavailable and
+// until when, which is exactly what every 503 from it already says.
+func (h *Handlers) listMaintenance(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"maintenance": h.reg.Maintenances()})
 }
 
 // sessionCookieName is set on login alongside the returned Bearer token: the
