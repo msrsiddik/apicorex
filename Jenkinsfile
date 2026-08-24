@@ -64,7 +64,10 @@ pipeline {
 
         stage('Test') {
             steps {
-                sh 'go test ./... -v'
+                // -count=1 so a rerun actually runs: without it Go reports
+                // "(cached)" per package and executes nothing, which is easy to
+                // read as a green test run that never happened.
+                sh 'go test ./... -v -count=1'
             }
         }
 
