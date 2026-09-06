@@ -61,6 +61,20 @@ services:
       HEALTH_INTERVAL: ${HEALTH_INTERVAL:-30s}
     ports:
       - "${CORE_PORT:-9999}:${CORE_PORT:-9999}"
+    # Registration is two-way: a plugin POSTs /_core/register, and Core then
+    # pulls /_apicorex/manifest back from the base_url the plugin gave. So Core
+    # has to be able to reach the plugin, and a plugin in its own compose
+    # project is only reachable through the host.
+    #
+    # host.docker.internal resolves on its own under Docker Desktop and not on
+    # Linux, so a VPS deploy failed here and nowhere else: registration was
+    # refused with 502 "cannot pull manifest … no such host", which reads like
+    # Core rejecting the plugin rather than Core being unable to call it.
+    #
+    # Changing this needs the container recreated, not restarted — extra_hosts
+    # is written into /etc/hosts when the container is created.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
 volumes:
   pgdata:

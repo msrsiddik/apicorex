@@ -56,6 +56,11 @@ services:
       HEALTH_INTERVAL: "30s"
     ports:
       - "9999:9999"
+    # Core pulls /_apicorex/manifest back from each plugin as it registers, so
+    # it must be able to reach a plugin that lives in its own compose project.
+    # host.docker.internal does not resolve on Linux without this.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
 volumes:
   pgdata:
