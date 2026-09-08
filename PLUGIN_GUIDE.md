@@ -169,6 +169,37 @@ Two things follow, and the second is the point:
 Deriving the name yourself will appear to work in a single-plugin deployment and
 break in the next one. Read the header.
 
+### The caller's address is **not** in that trusted set
+
+`X-ApiCoreX-*` headers are safe because Core strips them and writes them itself.
+`X-Forwarded-For` is the opposite: Core cannot strip it — appending to it is how
+an address reaches you at all — so what arrives is *whatever the caller sent*,
+with the address Core's socket saw **appended on the right**.
+
+    X-Forwarded-For: 1.2.3.4, 9.9.9.9, <what Core saw>
+                     └─ the caller wrote these ─┘
+
+Read the chain from the right, not the left, and count back only as many hops as
+your deployment actually has in front of Core:
+
+- **Rightmost entry** — written by Core. This is the caller, when nothing sits in
+  front of Core.
+- **One further left per proxy in front of Core** — a TLS terminator, an
+  ingress. Deployment knowledge; make it configuration.
+- **Chain shorter than that** — the request did not come through the proxies it
+  should have. Fall back to the socket address; do not reach further left.
+
+Most HTTP frameworks get this wrong by default, and quietly: several trust every
+proxy and hand you the **leftmost** entry, which is the one furthest from you
+and entirely the sender's to choose. Anything you count per address — an OTP, a
+login attempt, a public form — is then counting a number the sender picks, with
+no error and nothing in a log.
+
+If a framework offers a trusted-proxy setting, the safe configuration is to
+trust none of them, so its own accessor reports the socket, and to read the
+chain yourself as above. Go plugins using `apicorex-plugin-go` get this from
+`plugin.ClientIP(c)`; every other plugin has to do it itself.
+
 ---
 
 ## Money — integer, smallest unit, always
