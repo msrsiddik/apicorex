@@ -91,6 +91,23 @@ The drift was silent: every branch existed, every build passed, and nothing
 reported that the branches disagreed. That is why the rule needs to be a written
 rule rather than a habit.
 
+### Deploying more than one service
+
+**Core first.** When a change spans Core and a plugin — a header Core injects, a
+path it rewrites, a manifest field it learns to read — deploy Core before the
+plugins that depend on it.
+
+Neither order breaks anything, which is exactly the problem. A plugin deployed
+first asks for a header an old Core does not send, or declares a manifest field
+an old Core ignores; it keeps working and the new behaviour simply never turns
+on. Nothing logs that, because from each side alone nothing is wrong. So the
+order is a rule rather than a preference: getting it backwards produces a
+feature that is off for a reason no one can see.
+
+Where a platform module is involved, its tag comes before either: Docker and CI
+build with `GOWORK=off` and resolve the published version, so an untagged change
+does not exist to them. The full order is **tag, then Core, then the plugins.**
+
 ### Checks worth running before you start
 
 ```bash
