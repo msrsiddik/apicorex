@@ -46,6 +46,18 @@ services:
       # Comma-separated origins allowed to call Core from a browser. Empty =
       # no restriction (dev only).
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
+      # Where a browser with no session is sent. A path on this origin, not a
+      # URL. Empty keeps the JSON 401 an API client expects, which is also what
+      # a person navigating to a page would get.
+      LOGIN_URL: ${LOGIN_URL:-}
+      # Hostnames that stand for one plugin's surface, so panel.example.com
+      # serves what <gateway>/school serves with no prefix in the URL:
+      #
+      #   PRODUCT_HOSTS=panel.example.com=/school,gl.example.com=/accounting
+      #
+      # Needs the reverse proxy to preserve Host (Caddyfile.example). Empty is
+      # the ordinary case and changes nothing.
+      PRODUCT_HOSTS: ${PRODUCT_HOSTS:-}
       # OTLP endpoint (e.g. Jaeger/Tempo). Empty = tracing is a no-op.
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       # Path to a YAML file of per-plugin protection-limit overrides (see
@@ -59,8 +71,24 @@ services:
       CB_RESET_TIMEOUT: ${CB_RESET_TIMEOUT:-30s}
       REQUEST_TIMEOUT: ${REQUEST_TIMEOUT:-30s}
       HEALTH_INTERVAL: ${HEALTH_INTERVAL:-30s}
+    # Published on every interface by default, which means Core is reachable on
+    # the public IP over plain HTTP, past any TLS-terminating proxy in front of
+    # it. CORE_BIND=127.0.0.1 closes that — but read the next paragraph first,
+    # because on this topology it also breaks registration.
+    #
+    # Plugins run in their own compose projects and reach Core at
+    # host.docker.internal, which resolves to the bridge gateway (172.17.0.1 or
+    # similar), not to loopback. A socket bound to 127.0.0.1 does not accept
+    # that connection, so every plugin would fail to register. Binding to
+    # loopback is only safe once the plugins share a network with Core and
+    # address it by service name; short of that, keep the default and block the
+    # port at the host firewall instead.
+    #
+    # The same applies, more sharply, to the plugin ports in each plugin repo's
+    # compose file: a request reaching a plugin directly has bypassed Core's
+    # auth, rate limiting and route firewall entirely.
     ports:
-      - "${CORE_PORT:-9999}:${CORE_PORT:-9999}"
+      - "${CORE_BIND:-0.0.0.0}:${CORE_PORT:-9999}:${CORE_PORT:-9999}"
     # Registration is two-way: a plugin POSTs /_core/register, and Core then
     # pulls /_apicorex/manifest back from the base_url the plugin gave. So Core
     # has to be able to reach the plugin, and a plugin in its own compose

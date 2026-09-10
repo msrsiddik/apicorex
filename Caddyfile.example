@@ -1,0 +1,64 @@
+# Caddy in front of ApiCoreX. Copy to Caddyfile and replace the domains.
+#
+# The proxy's whole job is to terminate TLS and hand everything to Core
+# unchanged. There is no path rewriting here: Core decides what a path should
+# have been, from PRODUCT_HOSTS (see docs/panel-domain-plan.md §6.1 in
+# schoolyze-server). Keeping the mapping in one place is the point — a
+# handle_path here would be a second copy to keep in step with the app.
+#
+# Caddy needs no header configuration for this. It passes the incoming Host
+# through to an HTTP upstream and sets X-Forwarded-For / -Proto / -Host itself,
+# ignoring client-supplied values. Both matter: Core looks PRODUCT_HOSTS up by
+# Host, and marks its cookies Secure from X-Forwarded-Proto.
+#
+# (nginx does not do either by default. If you ever swap, see §6.1 — the one
+# line that matters is `proxy_set_header Host $host`.)
+
+{
+	# Where Let's Encrypt sends expiry warnings. Without it Caddy still issues
+	# certificates, but nobody hears when renewal starts failing.
+	email you@example.com
+}
+
+# ── The suite's gateway ─────────────────────────────────────────────────────
+#
+# The canonical origin: sign-in (/login), the ledger (/accounting), the public
+# institution websites (/site), Core's own dashboard (/dashboard), and the
+# panel at its full path (/school). Everything has a URL here, which is what
+# makes this the origin to point PUBLIC_BASE_URL and any bookmark at.
+app.msrdev.top {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:9999
+	log
+}
+
+# ── The school panel, on a host of its own ──────────────────────────────────
+#
+# Identical block. The difference is entirely in Core: with
+#
+#     PRODUCT_HOSTS=school.msrdev.top=/school
+#
+# a path nothing else serves gets /school put back before routing, so
+# school.msrdev.top/students reaches app.msrdev.top/school/students, and the
+# panel renders its links without the prefix.
+#
+# The suite's shared paths still work here, because Core rewrites only what no
+# plugin already claims: /login, /logout and /accounting are untouched.
+school.msrdev.top {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:9999
+	log
+}
+
+# ── An institution's own domain, later ──────────────────────────────────────
+#
+# The tenant-domain mechanism (DeclareDomainSurface + resolveCustomDomain) is a
+# different thing from PRODUCT_HOSTS: it resolves a hostname to an institution
+# through Identity, rather than to a product. Once a school claims and verifies
+# one, its block is the same three lines — Caddy issues the certificate on
+# demand and Core does the rest.
+#
+# portal.abc.edu.bd {
+# 	encode zstd gzip
+# 	reverse_proxy 127.0.0.1:9999
+# }
