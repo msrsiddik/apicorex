@@ -18,6 +18,19 @@
 	# Where Let's Encrypt sends expiry warnings. Without it Caddy still issues
 	# certificates, but nobody hears when renewal starts failing.
 	email you@example.com
+
+	# Certificates for hostnames nobody configured in advance — an institution's
+	# own domain, which the platform does not know the name of until they claim
+	# it. Only needed once you serve those; delete this block otherwise.
+	#
+	# `ask` is not optional. Without it anyone who points DNS at this server
+	# makes Caddy request a certificate for their hostname, and Let's Encrypt's
+	# rate limits then deny every legitimate domain that needed one that week.
+	# Core answers from Identity's record of verified claims (server/ondemand.go),
+	# on a loopback-only listener of its own — set ONDEMAND_TLS_ADDR to match.
+	on_demand_tls {
+		ask http://127.0.0.1:9998/domain-allowed
+	}
 }
 
 # ── The suite's gateway ─────────────────────────────────────────────────────
@@ -58,7 +71,22 @@ school.msrdev.top {
 # one, its block is the same three lines — Caddy issues the certificate on
 # demand and Core does the rest.
 #
+# A hostname per school, added by hand, needs no on-demand TLS:
+#
 # portal.abc.edu.bd {
+# 	encode zstd gzip
+# 	reverse_proxy 127.0.0.1:9999
+# }
+#
+# What does not scale is editing this file every time a school claims one. The
+# block below serves every verified tenant domain instead, getting each
+# certificate on first request and refusing the rest via `ask` above. Uncomment
+# it together with the on_demand_tls block.
+#
+# https:// {
+# 	tls {
+# 		on_demand
+# 	}
 # 	encode zstd gzip
 # 	reverse_proxy 127.0.0.1:9999
 # }

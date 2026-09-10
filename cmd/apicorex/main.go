@@ -73,6 +73,12 @@ func main() {
 	cpHandlers := controlplane.New(reg, disp, injector, pluginAPIKey, allowlist, pluginAPIKey, apicorexSecret)
 	httpSrv := server.NewHTTP(reg, disp, injector, introspector, domainResolver, cpHandlers, serveDashboard, httpAddr)
 
+	// The gate a reverse proxy asks before issuing a certificate for a hostname
+	// nobody configured — see server/ondemand.go. Empty (the default) means the
+	// listener never starts, which is every deployment that does not serve
+	// tenant-owned domains.
+	onDemandSrv := server.NewOnDemandTLS(domainResolver, os.Getenv("ONDEMAND_TLS_ADDR"))
+
 	healthMon := protection.NewHealthMonitor(reg, cb, cfg.HealthInterval)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -81,6 +87,7 @@ func main() {
 	g, gCtx := errgroup.WithContext(ctx)
 
 	g.Go(func() error { return httpSrv.Start(gCtx) })
+	g.Go(func() error { return server.RunOnDemandTLS(gCtx, onDemandSrv) })
 	g.Go(func() error {
 		healthMon.Run(gCtx)
 		return nil
