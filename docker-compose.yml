@@ -13,10 +13,16 @@
 #   docker compose up --build
 #
 services:
-  # Optional — off with `docker compose --profile with-postgres up` omitted,
-  # on with it included. Jenkins' DEPLOY_OWN_POSTGRES parameter switches this;
-  # turn it off when the plugins should point at a Postgres that already runs
-  # elsewhere instead.
+  # Optional, and off unless asked for: `docker compose up` starts nothing here
+  # without `--profile with-postgres`. Jenkins' DEPLOY_OWN_POSTGRES parameter
+  # switches it, and defaults to off — Core has no database of its own, so this
+  # service exists on the plugins' behalf, and a deployment past its first day
+  # usually has Postgres running somewhere this compose file did not put it.
+  #
+  # Omitting the profile does not stop a container already running from it:
+  # compose leaves out-of-profile services alone, and restart: unless-stopped
+  # keeps this one up. Turning the parameter off is therefore safe on a stack
+  # that was first brought up with it on.
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped

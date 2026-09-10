@@ -23,7 +23,7 @@ pipeline {
         // and the branch being built is the one work lands on. Tick it, with
         // TARGET_SERVER, for the build that is meant to ship.
         booleanParam(name: 'DEPLOY', defaultValue: false, description: 'Build the image and (re)start the container on TARGET_SERVER. Off means verify only.')
-        booleanParam(name: 'DEPLOY_OWN_POSTGRES', defaultValue: true, description: 'Also start the shared Postgres container (docker-compose.yml\'s "postgres" service). Turn off when plugins should point at a Postgres that already runs elsewhere — Core itself never touches the database either way.')
+        booleanParam(name: 'DEPLOY_OWN_POSTGRES', defaultValue: false, description: 'Also start the shared Postgres container (docker-compose.yml\'s "postgres" service). Off by default: Core itself never touches a database, so this only ever starts one on the plugins\' behalf, and by the time there is anything to lose the database is usually already running somewhere this job did not put it. Tick it for a first deploy, or wherever this job is the thing that owns Postgres. Leaving it off does not stop a container that is already up — the deploy omits the compose profile rather than tearing anything down.')
         string(name: 'CORE_PORT', defaultValue: '', description: 'Host+container port for Core (compose default: 9999)')
         string(name: 'POSTGRES_PORT', defaultValue: '', description: 'Host port for shared Postgres (compose default: 15432)')
         string(name: 'POSTGRES_USER', defaultValue: '', description: 'compose default: apicorex')
