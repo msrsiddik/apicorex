@@ -1,7 +1,6 @@
 package server
 
 import (
-	"net"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -36,11 +35,7 @@ func resolveCustomDomain(disp *dispatcher.Dispatcher, resolver *auth.DomainResol
 			return
 		}
 
-		host := c.Request.Host
-		if h, _, err := net.SplitHostPort(host); err == nil {
-			host = h
-		}
-		resolved, err := resolver.Resolve(c.Request.Context(), host)
+		resolved, err := resolver.Resolve(c.Request.Context(), stripHostPort(c.Request.Host))
 		if err != nil {
 			c.Next() // not a claimed domain, or Identity unreachable — 404 as before
 			return

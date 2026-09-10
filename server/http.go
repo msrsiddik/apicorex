@@ -149,9 +149,23 @@ func NewHTTP(
 	// with no identity to inject tenant headers from — permanently logged out
 	// despite a valid session cookie. OptionalAuth resolves one if present
 	// without rejecting the request when it isn't.
-	// Custom-domain path rewrite runs before the public/auth split below, so a
-	// request that only resolves via Host (see resolveCustomDomain) is
-	// classified correctly by the time IsPublic looks at its path.
+	// Both host-based path rewrites run before the public/auth split below, so a
+	// request that only resolves via Host is classified correctly by the time
+	// IsPublic looks at its path — and after StripSpoofedHeaders above, so the
+	// header productHostRewrite sets cannot be one the client sent.
+	//
+	// Product hosts first: the mapping is a local lookup, while a custom domain
+	// costs a call to Identity, and a host cannot be both.
+	productHosts, err := parseProductHosts(os.Getenv("PRODUCT_HOSTS"))
+	if err != nil {
+		// Refusing to start beats starting with a hostname that answers 404 for
+		// a reason nothing reports.
+		log.Fatalf("[http] PRODUCT_HOSTS: %v", err)
+	}
+	if len(productHosts) > 0 {
+		log.Printf("[http] product hosts: %s", strings.Join(productHostNames(productHosts), ", "))
+	}
+	engine.Use(productHostRewrite(disp, productHosts))
 	engine.Use(resolveCustomDomain(disp, domainResolver))
 
 	// Where to send a browser that is not signed in. Empty keeps the JSON 401

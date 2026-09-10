@@ -427,6 +427,12 @@ func (d *Dispatcher) Dispatch(c *gin.Context) {
 		return
 	}
 
+	// The hostname the browser asked for. Injected before the tenant headers
+	// and outside their identity check: the director is about to overwrite Host
+	// with the plugin's address, and a public route — which resolves no
+	// identity — is the main thing that needs this.
+	middleware.InjectForwardedHost(c)
+
 	// inject trusted tenant headers (claims set by auth middleware; nil for public routes)
 	//
 	// The schema is derived per plugin, not taken from the identity: the identity

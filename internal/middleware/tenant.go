@@ -52,6 +52,32 @@ const (
 	// logout / branch-switch can act on the exact token row without ever seeing
 	// the raw token.
 	HeaderTokenHash = "X-ApiCoreX-Token-Hash"
+	// HeaderForwardedHost carries the hostname the browser actually asked for.
+	//
+	// A plugin cannot otherwise know it: the proxy director overwrites Host with
+	// the plugin's own address so the outbound request addresses the plugin
+	// (see dispatcher.ProxyFor), and nothing else carried it. That left every
+	// host-based decision in a plugin reading the plugin's own address —
+	// Schoolyze's subdomain-to-institution resolution matched nothing, in every
+	// deployment, silently, because its slug-in-path fallback always works.
+	//
+	// Set from Core's own Request.Host, never from an inbound X-Forwarded-Host:
+	// that header is client-writable and this one is trusted downstream. A Core
+	// behind another proxy therefore needs that proxy to preserve Host
+	// (`proxy_set_header Host $host`); one that does not makes host-based
+	// resolution fall back rather than resolve to something forged.
+	HeaderForwardedHost = "X-ApiCoreX-Forwarded-Host"
+	// HeaderHostPrefix names the path prefix Core consumed from the URL because
+	// the request arrived on a host dedicated to one plugin's surface — see
+	// PRODUCT_HOSTS and server.productHostRewrite.
+	//
+	// It exists so the plugin can render links that match the URL the browser
+	// is on. A path rewrite alone cannot carry that: the same page must emit
+	// "/students" on panel.example.com and "/school/students" on the gateway,
+	// and only the plugin renders links. Absent means nothing was consumed and
+	// the plugin's own prefix is still in the URL — which is the ordinary case
+	// and the one every existing deployment stays in.
+	HeaderHostPrefix = "X-ApiCoreX-Host-Prefix"
 )
 
 var apicorexHeaders = []string{
@@ -59,7 +85,7 @@ var apicorexHeaders = []string{
 	HeaderBranchID, HeaderBranchSlug,
 	HeaderTenantName, HeaderBranchName,
 	HeaderUserID, HeaderUserName, HeaderUserType, HeaderRoles, HeaderPermissions, HeaderFeatures,
-	HeaderRequestID, HeaderTokenHash,
+	HeaderRequestID, HeaderTokenHash, HeaderForwardedHost, HeaderHostPrefix,
 }
 
 // StripSpoofedHeaders removes any client-supplied X-ApiCoreX-* headers so clients
@@ -72,6 +98,20 @@ func StripSpoofedHeaders() gin.HandlerFunc {
 			c.Request.Header.Del(h)
 		}
 		c.Next()
+	}
+}
+
+// InjectForwardedHost records the hostname the browser asked for, so the plugin
+// can read it after the director has replaced Host with the plugin's address.
+//
+// Separate from InjectTenantHeaders, and called unconditionally, because that
+// one returns early on a public route where no identity was resolved — and a
+// public route is precisely where this is needed. The guardian Portal is
+// public at the gateway: it is the surface that resolves an institution from
+// its hostname, and it is the surface that would never have received it.
+func InjectForwardedHost(c *gin.Context) {
+	if host := c.Request.Host; host != "" {
+		c.Request.Header.Set(HeaderForwardedHost, host)
 	}
 }
 
