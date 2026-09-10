@@ -29,6 +29,10 @@ pipeline {
         string(name: 'POSTGRES_USER', defaultValue: '', description: 'compose default: apicorex')
         string(name: 'POSTGRES_DB', defaultValue: '', description: 'compose default: apicorex')
         string(name: 'CORS_ALLOWED_ORIGINS', defaultValue: '', description: 'Comma-separated browser origins (compose default: unrestricted)')
+        string(name: 'LOGIN_URL', defaultValue: '', description: 'Where a browser with no session is sent, e.g. /login. A path on this origin, not a URL. Blank keeps the JSON 401 an API client expects, which is not what a person navigating to a page should see.')
+        string(name: 'PRODUCT_HOSTS', defaultValue: '', description: 'Hostnames that stand for one plugin surface, e.g. panel.example.com=/school,gl.example.com=/accounting. Needs the reverse proxy to preserve Host. A malformed entry stops Core from starting.')
+        string(name: 'ONDEMAND_TLS_PORT', defaultValue: '', description: 'Turns on the on-demand TLS gate the reverse proxy asks before issuing a certificate for a tenant-owned hostname (compose default: off). 9998 to match Caddyfile.example.')
+        string(name: 'CORE_BIND', defaultValue: '', description: 'Interface the gateway port publishes on (compose default: 0.0.0.0). Do not set 127.0.0.1 while plugins reach Core through host.docker.internal — see docker-compose.yml.')
         string(name: 'OTEL_EXPORTER_OTLP_ENDPOINT', defaultValue: '', description: 'OTLP endpoint (compose default: tracing off)')
         string(name: 'CONFIG_FILE', defaultValue: '', description: 'Path to per-plugin limit overrides YAML')
         string(name: 'RATE_PER_SEC', defaultValue: '', description: 'compose default: 1000')
@@ -110,6 +114,10 @@ pipeline {
                 POSTGRES_USER = "${params.POSTGRES_USER}"
                 POSTGRES_DB = "${params.POSTGRES_DB}"
                 CORS_ALLOWED_ORIGINS = "${params.CORS_ALLOWED_ORIGINS}"
+                LOGIN_URL = "${params.LOGIN_URL}"
+                PRODUCT_HOSTS = "${params.PRODUCT_HOSTS}"
+                ONDEMAND_TLS_PORT = "${params.ONDEMAND_TLS_PORT}"
+                CORE_BIND = "${params.CORE_BIND}"
                 OTEL_EXPORTER_OTLP_ENDPOINT = "${params.OTEL_EXPORTER_OTLP_ENDPOINT}"
                 CONFIG_FILE = "${params.CONFIG_FILE}"
                 RATE_PER_SEC = "${params.RATE_PER_SEC}"

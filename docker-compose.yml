@@ -58,13 +58,15 @@ services:
       # Needs the reverse proxy to preserve Host (Caddyfile.example). Empty is
       # the ordinary case and changes nothing.
       PRODUCT_HOSTS: ${PRODUCT_HOSTS:-}
-      # The on-demand TLS gate (see Caddyfile.example). Empty never starts it.
+      # The on-demand TLS gate (see Caddyfile.example). One setting turns it on:
+      # ONDEMAND_TLS_PORT. Empty leaves the address empty, and Core never starts
+      # the listener.
       #
-      # ":9998", not "127.0.0.1:9998": inside a container, loopback is the
-      # container's own and the proxy on the host could never reach it. The
-      # loopback-only property comes from the published port below instead,
-      # which is why that one is bound to 127.0.0.1 while the gateway's is not.
-      ONDEMAND_TLS_ADDR: ${ONDEMAND_TLS_ADDR:-}
+      # The address is a bare ":port", not "127.0.0.1:port": inside a container
+      # loopback is the container's own, and the proxy on the host could never
+      # reach it. The loopback-only property comes from the published port
+      # below, which is bound to 127.0.0.1 unlike the gateway's.
+      ONDEMAND_TLS_ADDR: ${ONDEMAND_TLS_PORT:+:${ONDEMAND_TLS_PORT}}
       # OTLP endpoint (e.g. Jaeger/Tempo). Empty = tracing is a no-op.
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       # Path to a YAML file of per-plugin protection-limit overrides (see
@@ -96,9 +98,12 @@ services:
     # auth, rate limiting and route firewall entirely.
     ports:
       - "${CORE_BIND:-0.0.0.0}:${CORE_PORT:-9999}:${CORE_PORT:-9999}"
-      # Uncomment alongside ONDEMAND_TLS_ADDR=":9998". Bound to loopback: this
-      # endpoint is for the reverse proxy on this host and nothing else.
-      # - "127.0.0.1:9998:9998"
+      # Always published, and always to loopback: this endpoint is for the
+      # reverse proxy on this host and nothing else. With ONDEMAND_TLS_PORT
+      # unset nothing listens behind it, so the mapping simply refuses
+      # connections — which costs nothing and keeps the deploy a one-variable
+      # change rather than a compose edit.
+      - "127.0.0.1:${ONDEMAND_TLS_PORT:-9998}:${ONDEMAND_TLS_PORT:-9998}"
     # Registration is two-way: a plugin POSTs /_core/register, and Core then
     # pulls /_apicorex/manifest back from the base_url the plugin gave. So Core
     # has to be able to reach the plugin, and a plugin in its own compose
