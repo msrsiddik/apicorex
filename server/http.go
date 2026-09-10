@@ -190,6 +190,11 @@ func NewHTTP(
 		authMiddleware(c)
 	})
 
+	// After the split, not before: a session-scoped custom domain is refused
+	// when its tenant disagrees with the caller's, and there is no caller to
+	// compare against until auth has run. See requireHostTenant.
+	engine.Use(requireHostTenant())
+
 	engine.NoRoute(disp.Dispatch)
 
 	log.Printf("[http] configured with Scalar UI at /docs")

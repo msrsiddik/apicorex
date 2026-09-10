@@ -158,6 +158,15 @@ func deviceToken(c *gin.Context) (string, bool) {
 	return "", false
 }
 
+// SetIdentity stores a resolved identity, the counterpart to IdentityFrom.
+//
+// Auth and OptionalAuth are the only things that call it in the server; it is
+// exported so that a test exercising a middleware which reads an identity can
+// establish one without standing up token introspection to do it.
+func SetIdentity(c *gin.Context, id *auth.Identity) {
+	c.Set(identityKey, id)
+}
+
 // IdentityFrom returns the resolved identity stored by Auth, or nil if the
 // request was not authenticated (e.g. a public route).
 func IdentityFrom(c *gin.Context) *auth.Identity {

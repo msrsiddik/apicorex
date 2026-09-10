@@ -299,11 +299,12 @@ func (d *Dispatcher) IsRoutable(method, path string) bool {
 }
 
 // FindDomainSurface exposes the registry's plugin-surface lookup (see
-// registry.FindByDomainSurface) — the path prefix a resolved custom-domain
-// request should be rewritten under before it's routed normally.
-func (d *Dispatcher) FindDomainSurface(surface string) (pathPrefix string, ok bool) {
-	_, prefix, ok := d.reg.FindByDomainSurface(surface)
-	return prefix, ok
+// registry.FindByDomainSurface) — where a resolved custom-domain request should
+// be rewritten to, and whether that surface takes its tenant from the session
+// rather than from a slug in the URL.
+func (d *Dispatcher) FindDomainSurface(surface string) (manifest.DomainSurface, bool) {
+	_, declared, ok := d.reg.FindByDomainSurface(surface)
+	return declared, ok
 }
 
 // authorized reports whether the resolved identity (the ACTING user, fresh

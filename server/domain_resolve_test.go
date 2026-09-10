@@ -13,6 +13,7 @@ import (
 	"github.com/msrsiddik/apicorex/internal/config"
 	"github.com/msrsiddik/apicorex/internal/dispatcher"
 	"github.com/msrsiddik/apicorex/internal/manifest"
+	"github.com/msrsiddik/apicorex/internal/middleware"
 	"github.com/msrsiddik/apicorex/internal/protection"
 	"github.com/msrsiddik/apicorex/internal/registry"
 )
@@ -168,5 +169,81 @@ func TestResolveCustomDomain_UnclaimedHostIsNoop(t *testing.T) {
 
 	if w.Body.String() != "/login" {
 		t.Errorf("path = %q, want unchanged /login", w.Body.String())
+	}
+}
+
+// A session-scoped surface gets the prefix and no slug — its tenant is the
+// session's, and writing one into the URL would invent a second, weaker answer
+// to a question already settled. The prefix header goes with it so the plugin
+// renders links without it.
+func TestResolveCustomDomain_SessionScopedWritesNoSlug(t *testing.T) {
+	resolver := fakeIdentity(t, "panel.acme.edu.bd", auth.ResolvedDomain{
+		TenantID: "t_acme", TenantSlug: "acme", Surface: "panel",
+	})
+	engine, _ := newRewriteTestEngine(t, resolver,
+		[]manifest.DomainSurface{{Surface: "panel", PathPrefix: "/school", SessionScoped: true}},
+		[]manifest.Route{{Method: "GET", Path: "/school/*"}},
+	)
+
+	var gotPrefix string
+	engine.NoRoute(func(c *gin.Context) {
+		gotPrefix = c.Request.Header.Get(middleware.HeaderHostPrefix)
+		c.String(http.StatusOK, c.Request.URL.Path)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/students", nil)
+	req.Host = "panel.acme.edu.bd"
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+
+	if got := w.Body.String(); got != "/school/students" {
+		t.Errorf("rewritten path = %q, want /school/students — a slug here would be a tenant claim from the URL", got)
+	}
+	if gotPrefix != "/school" {
+		t.Errorf("%s = %q, want /school", middleware.HeaderHostPrefix, gotPrefix)
+	}
+}
+
+// The check the slug used to perform, moved to the only party that can make it.
+// A session for one institution reaching another's hostname is refused; nothing
+// downstream sees the request.
+func TestRequireHostTenant(t *testing.T) {
+	cases := []struct {
+		name     string
+		resolved string // tenant the hostname resolved to; "" = not a custom domain
+		session  string // tenant the caller's session belongs to; "" = no session
+		wantCode int
+	}{
+		{"host and session agree", "t_acme", "t_acme", http.StatusOK},
+		{"a session for another institution", "t_acme", "t_beta", http.StatusForbidden},
+		// Not signed in: the login page is where this ends, not another
+		// institution's records.
+		{"no session at all", "t_acme", "", http.StatusOK},
+		// Every ordinary request, on the platform's own hostname.
+		{"not a session-scoped domain", "", "t_beta", http.StatusOK},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			engine := gin.New()
+			engine.Use(func(c *gin.Context) {
+				if tc.resolved != "" {
+					c.Set(resolvedTenantKey, tc.resolved)
+				}
+				if tc.session != "" {
+					middleware.SetIdentity(c, &auth.Identity{TenantID: tc.session})
+				}
+				c.Next()
+			})
+			engine.Use(requireHostTenant())
+			engine.GET("/students", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+			w := httptest.NewRecorder()
+			engine.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/students", nil))
+			if w.Code != tc.wantCode {
+				t.Errorf("status = %d, want %d", w.Code, tc.wantCode)
+			}
+		})
 	}
 }

@@ -116,8 +116,8 @@ func TestDispatcher_FindDomainSurface(t *testing.T) {
 		t.Fatalf("register: %v", err)
 	}
 
-	if prefix, ok := d.FindDomainSurface("portal"); !ok || prefix != "/school/portal" {
-		t.Errorf("got (%q, %v), want (/school/portal, true)", prefix, ok)
+	if got, ok := d.FindDomainSurface("portal"); !ok || got.PathPrefix != "/school/portal" {
+		t.Errorf("got (%q, %v), want (/school/portal, true)", got.PathPrefix, ok)
 	}
 	if _, ok := d.FindDomainSurface("website"); ok {
 		t.Error("an undeclared surface should not resolve")

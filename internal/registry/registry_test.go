@@ -26,12 +26,12 @@ func TestFindByDomainSurface(t *testing.T) {
 		{Surface: "website", PathPrefix: "/site"},
 	})
 
-	entry, prefix, ok := r.FindByDomainSurface("portal")
+	entry, declared, ok := r.FindByDomainSurface("portal")
 	if !ok {
 		t.Fatal("expected to find the portal surface")
 	}
-	if prefix != "/school/portal" {
-		t.Errorf("prefix = %q, want /school/portal", prefix)
+	if declared.PathPrefix != "/school/portal" {
+		t.Errorf("prefix = %q, want /school/portal", declared.PathPrefix)
 	}
 	if entry.Info.PluginName != "schoolyze" {
 		t.Errorf("plugin = %q, want schoolyze", entry.Info.PluginName)
@@ -67,10 +67,10 @@ func TestFindByDomainSurface_MultiplePlugins(t *testing.T) {
 		{Surface: "storefront", PathPrefix: "/shop"},
 	})
 
-	if _, prefix, ok := r.FindByDomainSurface("storefront"); !ok || prefix != "/shop" {
-		t.Errorf("storefront: ok=%v prefix=%q, want true /shop", ok, prefix)
+	if _, d, ok := r.FindByDomainSurface("storefront"); !ok || d.PathPrefix != "/shop" {
+		t.Errorf("storefront: ok=%v prefix=%q, want true /shop", ok, d.PathPrefix)
 	}
-	if _, prefix, ok := r.FindByDomainSurface("portal"); !ok || prefix != "/school/portal" {
-		t.Errorf("portal: ok=%v prefix=%q, want true /school/portal", ok, prefix)
+	if _, d, ok := r.FindByDomainSurface("portal"); !ok || d.PathPrefix != "/school/portal" {
+		t.Errorf("portal: ok=%v prefix=%q, want true /school/portal", ok, d.PathPrefix)
 	}
 }

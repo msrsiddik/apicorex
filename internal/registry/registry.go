@@ -182,11 +182,12 @@ func (r *Registry) GetManifest(name string) (manifest.Manifest, bool) {
 }
 
 // FindByDomainSurface returns the live plugin that declared the given domain
-// surface (see manifest.DomainSurface) and the path prefix to rewrite a
-// resolved custom-domain request to before proxying it. Only ever consulted
+// surface (see manifest.DomainSurface) and the declaration itself — the path
+// prefix to rewrite a resolved custom-domain request to, and whether that
+// surface takes its tenant from the session rather than the URL. Only ever consulted
 // for a request whose Host resolved to a tenant but whose path matched no
 // ordinary route — see dispatcher.resolveByHost.
-func (r *Registry) FindByDomainSurface(surface string) (entry *PluginEntry, pathPrefix string, ok bool) {
+func (r *Registry) FindByDomainSurface(surface string) (entry *PluginEntry, declared manifest.DomainSurface, ok bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	for _, e := range r.plugins {
@@ -195,9 +196,9 @@ func (r *Registry) FindByDomainSurface(surface string) (entry *PluginEntry, path
 		}
 		for _, s := range e.Manifest.DomainSurfaces {
 			if s.Surface == surface {
-				return e, s.PathPrefix, true
+				return e, s, true
 			}
 		}
 	}
-	return nil, "", false
+	return nil, manifest.DomainSurface{}, false
 }

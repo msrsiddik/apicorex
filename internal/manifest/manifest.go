@@ -28,6 +28,23 @@ type Migration struct {
 type DomainSurface struct {
 	Surface    string `json:"surface"`
 	PathPrefix string `json:"path_prefix"`
+
+	// SessionScoped says the tenant comes from the caller's session rather than
+	// from the URL, which changes both halves of how Core serves this surface.
+	//
+	// Schoolyze's portal and website are the ordinary kind: they are public,
+	// and they read the institution out of a slug in the path. Core can
+	// therefore serve a custom domain for them by writing the slug in — the
+	// plugin sees the URL shape it already handles and needs no new trust.
+	//
+	// A staff panel cannot work that way. Its tenant is whichever institution
+	// the signed-in user belongs to, and a slug in the URL is not something to
+	// trust for that. So Core writes no slug, tells the plugin the prefix was
+	// consumed (X-ApiCoreX-Host-Prefix, so its links drop it), and takes on the
+	// check the URL used to carry: the tenant this hostname resolved to and the
+	// tenant the session belongs to must agree. Core is the only party holding
+	// both facts.
+	SessionScoped bool `json:"session_scoped,omitempty"`
 }
 
 // TenantSchemaShared is the TenantSchema value that asks Core for the tenant's
