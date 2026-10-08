@@ -31,11 +31,17 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
 # ── Runtime stage ──────────────────────────────────────────────────────────
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates wget && \
-    adduser -D -u 10001 app
+    adduser -D -u 10001 app && \
+    mkdir -p /data && chown app:app /data
 WORKDIR /app
 COPY --from=build /out/apicorex /app/apicorex
 # config.example.yaml ships as a reference; mount your own at /app/config.yaml.
 COPY --from=build /src/config.example.yaml /app/config.example.yaml
+
+# The config store (internal/store). Owned by app so the non-root process can
+# create it; a named volume mounted here starts with this ownership.
+VOLUME /data
+ENV STORE_PATH=/data/core.db
 
 USER app
 EXPOSE 8080

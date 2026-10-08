@@ -2,13 +2,15 @@
 
 import { cn } from "@/lib/utils";
 import { clearSession } from "@/lib/api";
-import { LayoutDashboard, Plug, FileText, Activity, LogOut } from "lucide-react";
+import { LayoutDashboard, Plug, FileText, Activity, LogOut, Database, ScrollText } from "lucide-react";
 
-export type SectionId = "overview" | "plugins";
+export type SectionId = "overview" | "plugins" | "database" | "audit";
 
 const NAV: { id: SectionId; label: string; Icon: typeof Plug }[] = [
   { id: "overview", label: "Overview", Icon: LayoutDashboard },
   { id: "plugins", label: "Plugins & routes", Icon: Plug },
+  { id: "database", label: "Databases", Icon: Database },
+  { id: "audit", label: "Audit log", Icon: ScrollText },
 ];
 
 export default function Sidebar({

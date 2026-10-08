@@ -1,8 +1,15 @@
 # Working in this repo
 
 ApiCoreX Core — the gateway. It routes to plugins, enforces auth and protection,
-and knows no domain. It has no database. Keep it that way: the moment Core knows
-what a fee or a patient is, every deployment carries every product's vocabulary.
+and knows no domain. It holds no domain data. Keep it that way: the moment Core
+knows what a fee or a patient is, every deployment carries every product's
+vocabulary.
+
+The one thing Core does store is infrastructure config, in a SQLite file
+(`internal/store`): plugin database connections, pool sizes, operator commands
+and their audit trail. It lives in Core because it has to work before Postgres
+is reachable — a store inside Postgres cannot hold the address of Postgres.
+Nothing that describes a tenant, a user or a product belongs in it.
 
 ## This repository is PUBLIC
 
@@ -44,7 +51,8 @@ plugin against the dev Core only.
 is the committed copy. The values in `.env` are for the container build and use
 `host.docker.internal`, which does not resolve on the host — do not reuse them.
 
-`make dev` needs no database — Core has none.
+`make dev` needs no Postgres — Core does not use it. Its config store is a
+SQLite file it creates itself (`STORE_PATH`, under the gitignored `data/`).
 
 ## Branching and release flow
 

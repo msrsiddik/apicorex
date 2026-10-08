@@ -128,6 +128,159 @@ export function forceDeregister(pluginID: string): Promise<void> {
   return adminPost(`/_core/admin/plugins/${encodeURIComponent(pluginID)}/deregister`);
 }
 
+// ── Config store: plugin database connections ──────────────────────────────
+// Every route is behind the dashboard session. A stored DSN never comes back
+// from Core — only dsn_display, with the password replaced.
+
+async function adminJSON<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const res = await fetch(path, {
+    method,
+    headers: {
+      Authorization: `Bearer ${sessionToken()}`,
+      ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+    },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  let out: any = null;
+  try {
+    out = await res.json();
+  } catch {
+    /* no body */
+  }
+  if (!res.ok) {
+    throw new Error(out && out.error ? out.error : `request failed (${res.status})`);
+  }
+  return out as T;
+}
+
+// The default row every plugin inherits from.
+export const DEFAULT_PLUGIN = "*";
+
+// null = inherit (from the default, or the built-in when the default is unset too).
+export interface PoolSettings {
+  max_open: number | null;
+  max_idle: number | null;
+  conn_max_lifetime_s: number | null;
+  conn_max_idle_s: number | null;
+}
+
+export interface EffectivePool {
+  max_open: number;
+  max_idle: number;
+  conn_max_lifetime_s: number;
+  conn_max_idle_s: number;
+}
+
+export interface DBConfigRow {
+  plugin: string;
+  has_dsn: boolean;
+  dsn_display: string;
+  pool: PoolSettings;
+  version: number;
+  updated_at: string;
+  updated_by: string;
+}
+
+export interface DBPluginView {
+  name: string;
+  registered: boolean;
+  has_own_row: boolean;
+  dsn_source: "own" | "default" | "";
+  effective: EffectivePool;
+  version: number;
+  // What the plugin itself last reported on its heartbeat.
+  running: "core" | "env" | "";
+  running_version: number;
+}
+
+export interface DBConfigOverview {
+  has_master_key: boolean;
+  writable: boolean;
+  rows: DBConfigRow[];
+  plugins: DBPluginView[];
+  total_max_open: number;
+}
+
+export type DSNAction = "keep" | "set" | "inherit";
+
+export interface DBConfigInput {
+  dsn_action: DSNAction;
+  dsn?: string;
+  pool: PoolSettings;
+  note?: string;
+}
+
+export interface DBConfigVersion {
+  version: number;
+  plugin: string;
+  action: "save" | "delete" | "rollback";
+  has_dsn: boolean;
+  dsn_display: string;
+  pool: PoolSettings;
+  note: string;
+  saved_at: string;
+  saved_by: string;
+}
+
+export interface ProbeResult {
+  current_user: string;
+  server_version: string;
+  max_connections: number;
+  reserved_connections: number;
+  in_use: number;
+  latency_ms: number;
+}
+
+export interface ProbeResponse {
+  ok: boolean;
+  error?: string;
+  result?: ProbeResult;
+}
+
+const enc = encodeURIComponent;
+
+export function fetchDBConfig(): Promise<DBConfigOverview> {
+  return adminJSON("GET", "/_core/admin/db-config");
+}
+
+export function saveDBConfig(plugin: string, input: DBConfigInput): Promise<DBConfigRow> {
+  return adminJSON("PUT", `/_core/admin/db-config/${enc(plugin)}`, input);
+}
+
+export function deleteDBConfig(plugin: string): Promise<void> {
+  return adminJSON("DELETE", `/_core/admin/db-config/${enc(plugin)}`);
+}
+
+export function fetchDBConfigHistory(plugin: string): Promise<DBConfigVersion[]> {
+  return adminJSON("GET", `/_core/admin/db-config/${enc(plugin)}/history`);
+}
+
+export function rollbackDBConfig(plugin: string, version: number): Promise<DBConfigRow> {
+  return adminJSON("POST", `/_core/admin/db-config/${enc(plugin)}/rollback`, { version });
+}
+
+export function testDBConfig(plugin: string, dsnAction: DSNAction, dsn?: string): Promise<ProbeResponse> {
+  return adminJSON("POST", `/_core/admin/db-config/${enc(plugin)}/test`, { dsn_action: dsnAction, dsn });
+}
+
+export function fetchPostgres(): Promise<ProbeResponse> {
+  return adminJSON("GET", "/_core/admin/postgres");
+}
+
+export interface AuditEntry {
+  id: number;
+  at: string;
+  actor: string;
+  action: string;
+  target: string;
+  detail: string;
+}
+
+export function fetchAudit(before?: number): Promise<AuditEntry[]> {
+  const q = before ? `?limit=50&before=${before}` : "?limit=50";
+  return adminJSON("GET", `/_core/admin/audit${q}`);
+}
+
 // ── Prometheus text-exposition parsing ──────────────────────────────────────
 // /metrics is plain-text (no JSON endpoint exists for it), so we parse just
 // the handful of metric families the dashboard cares about. Lines look like:

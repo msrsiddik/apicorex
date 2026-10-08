@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import Sidebar, { type SectionId } from "@/components/Sidebar";
 import OverviewPanel from "@/components/OverviewPanel";
 import PluginsPanel from "@/components/PluginsPanel";
+import DatabasePanel from "@/components/DatabasePanel";
+import AuditPanel from "@/components/AuditPanel";
 import LoginForm from "@/components/LoginForm";
 import {
   checkSession,
@@ -24,8 +26,22 @@ type AuthState = "checking" | "authenticated" | "unauthenticated";
 // the identical index.html (its JS/CSS still load from /dashboard/_next/...,
 // since basePath only affects asset URLs, not this route) so the plugins tab
 // gets its own top-level URL instead of nesting under /dashboard.
+//
+// The config screens live under /dashboard/ rather than beside /plugin: the
+// root of the URL space belongs to plugin routes, and a plugin could own
+// /database. Go's /dashboard/* handler serves index.html for any path it has
+// no file for, so these need no route of their own.
+const SECTION_PATHS: Record<SectionId, string> = {
+  overview: "/dashboard",
+  plugins: "/plugin",
+  database: "/dashboard/database",
+  audit: "/dashboard/audit",
+};
+
 function sectionFromPath(pathname: string): SectionId {
-  return pathname.replace(/\/+$/, "") === "/plugin" ? "plugins" : "overview";
+  const p = pathname.replace(/\/+$/, "");
+  const hit = (Object.keys(SECTION_PATHS) as SectionId[]).find((id) => SECTION_PATHS[id] === p);
+  return hit ?? "overview";
 }
 
 export default function Home() {
@@ -41,7 +57,7 @@ export default function Home() {
 
   const setSection = useCallback((id: SectionId) => {
     setSectionState(id);
-    const path = id === "overview" ? "/dashboard" : "/plugin";
+    const path = SECTION_PATHS[id];
     if (window.location.pathname.replace(/\/+$/, "") !== path) {
       window.history.pushState(null, "", path);
     }
@@ -115,8 +131,12 @@ export default function Home() {
             metrics={metrics}
             metricsError={metricsError}
           />
-        ) : (
+        ) : section === "plugins" ? (
           <PluginsPanel plugins={plugins} loading={loading} error={error} onRefresh={load} />
+        ) : section === "database" ? (
+          <DatabasePanel />
+        ) : (
+          <AuditPanel />
         )}
       </main>
     </div>

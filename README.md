@@ -1,10 +1,10 @@
 # ApiCoreX
 
-A **stateless, multi-tenant API gateway** with a language-agnostic HTTP plugin
+A **multi-tenant API gateway** with a language-agnostic HTTP plugin
 system. Core handles authentication, routing, streaming, and resilience; your
 business logic lives in plugins written in **any language**.
 
-- **Stateless Core** — no database; resolves device tokens (via Identity), routes, and proxies. Scales horizontally.
+- **No domain data in Core** — it resolves device tokens (via Identity), routes, and proxies. The only thing it stores is operator config (plugin database connections, commands) in a local SQLite file; see [Config store](#config-store).
 - **Any-language plugins** — a plugin is just an HTTP server. No SDK required (Go, Python, Java, Node…). See [PLUGIN_GUIDE.md](./PLUGIN_GUIDE.md).
 - **Streaming first** — file upload/download, SSE, and WebSocket all work (HTTP reverse proxy, not gRPC).
 - **Multi-tenant** — an opaque bearer device token is introspected against Identity per request; Core injects the resolved tenant/branch/user context as trusted headers.
@@ -160,6 +160,11 @@ All via environment variables (secrets never hardcoded):
 | `CORS_ALLOWED_ORIGINS` | empty | Comma-separated browser origins allowed to call Core; empty = any origin (dev only) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | empty | Enables OpenTelemetry tracing (e.g. Jaeger) |
 | `CONFIG_FILE` | empty | YAML for per-plugin rate/limit overrides — see [config.example.yaml](./config.example.yaml) |
+| `STORE_PATH` | `data/core.db` (`/data/core.db` in the image) | The config store's SQLite file |
+| `CORE_MASTER_KEY` | empty | 32 random bytes, base64 (`openssl rand -base64 32`). Seals secrets in the config store; unset means the dashboard cannot save any |
+| `STORE_SNAPSHOT_INTERVAL` | `24h` | How often the store snapshots itself into `snapshots/` beside the file; `0` turns it off |
+| `STORE_SNAPSHOT_KEEP` | `7` | Snapshots kept |
+| `SEED_DATABASE_URL` | empty | Sets the default plugin database connection once, on a store that has none; ignored afterwards |
 
 Per-plugin limits (rate, bulkhead, circuit breaker, timeouts, health-check
 interval) can also be tuned globally via env vars: `RATE_PER_SEC`,
@@ -174,6 +179,32 @@ with its default spelled out. `docker-compose.yml` itself reads each one as
 put it in a `.env` file next to the compose file, to override just that one.
 The Jenkins pipeline exposes the same vars as build parameters (blank =
 compose default) for changing a deploy (e.g. the port) without touching code.
+
+### Config store
+
+What an operator sets from the gateway dashboard is kept in a SQLite file at
+`STORE_PATH`, on the `coredata` volume in Docker. It is SQLite rather than a
+table in Postgres because it has to work before Postgres is reachable — the
+address of Postgres is one of the things it can hold.
+
+Secrets in it are sealed with `CORE_MASTER_KEY` (AES-256-GCM). Keep a copy of
+the key somewhere other than the server: a store, or a backup of one, cannot
+be read without it.
+
+Backups:
+
+- **Snapshots** are taken on a schedule into `snapshots/` next to the file.
+  They protect against a bad change or a corrupt file, not against losing the
+  volume.
+- **On demand**, from a shell: `docker compose exec core /app/apicorex store
+  backup /data/manual.db`. The copy is consistent even while Core is running.
+  Copy it off the server for a backup that survives losing the volume.
+
+To restore, stop Core, put the backup in place of `STORE_PATH`, and start it
+with the same `CORE_MASTER_KEY`.
+
+One instance of Core per store file. Running several replicas against
+separate files would give each its own config.
 
 ---
 

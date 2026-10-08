@@ -48,6 +48,21 @@ services:
       HTTP_PORT: ":${CORE_PORT:-9999}"
       PLUGIN_API_KEY: ${PLUGIN_API_KEY:-change-me-plugin-key}
       APICOREX_SECRET: ${APICOREX_SECRET:-apicorex-secret}
+      # The config store: what the dashboard saves (plugin database
+      # connections, commands) lives in a SQLite file on the coredata volume.
+      # Secrets in it are sealed with CORE_MASTER_KEY — 32 random bytes,
+      # `openssl rand -base64 32`. Keep a copy of the key outside this server:
+      # without it the stored secrets cannot be read, backups included. Empty
+      # = the dashboard cannot save secrets; everything else still works.
+      STORE_PATH: /data/core.db
+      CORE_MASTER_KEY: ${CORE_MASTER_KEY:-}
+      # Daily snapshots into /data/snapshots, a week kept. 0 turns them off.
+      STORE_SNAPSHOT_INTERVAL: ${STORE_SNAPSHOT_INTERVAL:-24h}
+      STORE_SNAPSHOT_KEEP: ${STORE_SNAPSHOT_KEEP:-7}
+      # Fills the dashboard's default database connection once, on a store
+      # that has none. Ignored after that — the dashboard owns it. Leave empty
+      # to set it by hand.
+      SEED_DATABASE_URL: ${SEED_DATABASE_URL:-}
       # PLUGIN_ALLOWLIST: identity,sync
       # Comma-separated origins allowed to call Core from a browser. Empty =
       # no restriction (dev only).
@@ -124,6 +139,9 @@ services:
     # is written into /etc/hosts when the container is created.
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      - coredata:/data
 
 volumes:
   pgdata:
+  coredata:

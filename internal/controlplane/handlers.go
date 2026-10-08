@@ -6,9 +6,11 @@ package controlplane
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +21,7 @@ import (
 	"github.com/msrsiddik/apicorex/internal/openapi"
 	"github.com/msrsiddik/apicorex/internal/protection"
 	"github.com/msrsiddik/apicorex/internal/registry"
+	"github.com/msrsiddik/apicorex/internal/store"
 )
 
 type Handlers struct {
@@ -31,7 +34,26 @@ type Handlers struct {
 	apicorexSecret string
 	sessionSigner  *tokenSigner
 	client         *http.Client
+	// adminMounts add routes to the session-gated /_core/admin group from
+	// packages that own their own handlers (the config store's screens).
+	adminMounts []func(*gin.RouterGroup)
+	// store serves plugin database config and operator commands. nil leaves
+	// those endpoints answering 503 and heartbeats carrying neither, which is
+	// what tests of the routing side need.
+	store *store.Store
 }
+
+// SetStore connects the config store. Call it before Mount.
+func (h *Handlers) SetStore(st *store.Store) { h.store = st }
+
+// MountAdmin registers fn to add routes to the session-gated /_core/admin
+// group. Call it before Mount.
+func (h *Handlers) MountAdmin(fn func(*gin.RouterGroup)) { h.adminMounts = append(h.adminMounts, fn) }
+
+// LoginEnabled reports whether the dashboard has a login at all. Without one
+// the admin routes are open, which is tolerable for resetting a breaker on a
+// dev machine and not for changing where plugins connect.
+func (h *Handlers) LoginEnabled() bool { return h.apicorexSecret != "" }
 
 // New builds the control-plane handlers. allowlist is the set of plugin names
 // permitted to register (empty slice = allow any, for dev). The signer secret
@@ -72,6 +94,8 @@ func (h *Handlers) Mount(engine *gin.Engine) {
 	g.POST("/register", h.register)
 	g.POST("/heartbeat", h.heartbeat)
 	g.POST("/deregister", h.deregister)
+	g.POST("/config/db", h.dbConfig)
+	g.POST("/commands/:id/result", h.commandResult)
 	g.GET("/plugins/:name/manifest", h.pluginManifest)
 	// Maintenance windows. Authenticated with the same shared plugin key as
 	// register/heartbeat: the caller is Identity, doing structural work on a
@@ -95,6 +119,9 @@ func (h *Handlers) Mount(engine *gin.Engine) {
 	admin.GET("/session", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
 	admin.POST("/plugins/:id/reset-breaker", h.resetBreaker)
 	admin.POST("/plugins/:id/deregister", h.adminDeregister)
+	for _, fn := range h.adminMounts {
+		fn(admin)
+	}
 }
 
 // maintenanceReq opens or closes a window on one plugin.
@@ -324,6 +351,9 @@ func (h *Handlers) register(c *gin.Context) {
 		return
 	}
 	h.disp.AddRoutes(pluginID, m.Name, m.PluginType, m.Routes)
+	// Back from a dashboard restart: reopen its routes now rather than when
+	// the window would have run out.
+	h.reg.EndRestartWindow(m.Name)
 	h.injector.AddRoutes(m.Name, m.Routes, m.OpenAPISpec)
 
 	// issue a signed plugin token; plugin presents it on heartbeat/deregister
@@ -334,10 +364,19 @@ func (h *Handlers) register(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"plugin_id": pluginID, "plugin_token": token})
 }
 
+// heartbeat keeps a plugin registered, and is the channel Core talks back on.
+//
+// The plugin may report its database pool — db_source ("core" or "env") and
+// db_version — so the dashboard can show whether a saved change has reached
+// it. The response carries config_version, the plugin's current database
+// config version, and at most one waiting command. A plugin that knows
+// neither ignores both; Core can therefore ship this before any plugin does.
 func (h *Handlers) heartbeat(c *gin.Context) {
 	var req struct {
 		PluginID    string `json:"plugin_id"`
 		PluginToken string `json:"plugin_token"`
+		DBSource    string `json:"db_source"`
+		DBVersion   int64  `json:"db_version"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
@@ -351,8 +390,155 @@ func (h *Handlers) heartbeat(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "plugin not found"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"acknowledged": true})
+	resp := gin.H{"acknowledged": true}
+	entry, ok := h.reg.Get(req.PluginID)
+	if !ok || h.store == nil || store.ValidatePluginName(entry.Info.PluginName) != nil {
+		c.JSON(http.StatusOK, resp)
+		return
+	}
+	name := entry.Info.PluginName
+	h.reg.ReportDB(req.PluginID, req.DBSource, req.DBVersion)
+
+	ctx := c.Request.Context()
+	// A store error must not fail the heartbeat: the plugin would read it as
+	// Core being down and re-register, over a problem that is not about
+	// registration at all. It just hears nothing new this time.
+	if eff, err := h.store.ResolveDBConfig(ctx, name); err == nil {
+		resp["config_version"] = eff.Version
+	} else {
+		log.Printf("[controlplane] heartbeat %s: config version: %v", name, err)
+	}
+	if cmd, err := h.store.TakeCommand(ctx, name); err != nil {
+		log.Printf("[controlplane] heartbeat %s: command: %v", name, err)
+	} else if cmd != nil {
+		resp["command"] = gin.H{"id": cmd.ID, "kind": cmd.Kind}
+		log.Printf("[controlplane] delivered %s command %d to %s", cmd.Kind, cmd.ID, req.PluginID)
+	}
+	c.JSON(http.StatusOK, resp)
 }
+
+// dbConfig hands a plugin the database connection the dashboard set for it.
+//
+// It is called before the plugin registers — the pool comes first — so it
+// authenticates with the plugin API key and names the plugin in the body
+// rather than presenting a plugin token. The key is shared by every plugin
+// today, so this trusts the caller about which plugin it is; that is no worse
+// than before, when every plugin was handed the same DSN anyway, but it is why
+// per-plugin keys must come before per-plugin database roles mean anything.
+func (h *Handlers) dbConfig(c *gin.Context) {
+	var req struct {
+		APIKey string `json:"api_key"`
+		Plugin string `json:"plugin"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		return
+	}
+	if h.apiKey != "" && subtle.ConstantTimeCompare([]byte(req.APIKey), []byte(h.apiKey)) != 1 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid api key"})
+		return
+	}
+	if len(h.allowlist) > 0 && !h.allowlist[req.Plugin] {
+		c.JSON(http.StatusForbidden, gin.H{"error": fmt.Sprintf("plugin %q not in allowlist", req.Plugin)})
+		return
+	}
+	if req.Plugin == store.DefaultPlugin || store.ValidatePluginName(req.Plugin) != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid plugin name"})
+		return
+	}
+	if h.store == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "config store unavailable"})
+		return
+	}
+
+	ctx := c.Request.Context()
+	eff, err := h.store.EffectiveDBConfig(ctx, req.Plugin)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("no database connection is configured for %q — set one in the gateway dashboard", req.Plugin)})
+		return
+	case errors.Is(err, store.ErrNoMasterKey), errors.Is(err, store.ErrWrongKey):
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Core cannot open stored connections: " + err.Error()})
+		return
+	case err != nil:
+		log.Printf("[controlplane] db config for %s: %v", req.Plugin, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "config store error"})
+		return
+	}
+
+	// Handing out a password is worth a line in the audit trail; the value
+	// itself never goes there.
+	if err := h.store.Audit(ctx, "plugin:"+req.Plugin+"@"+c.ClientIP(), "db_config.fetch", req.Plugin, fmt.Sprintf("version %d", eff.Version)); err != nil {
+		log.Printf("[controlplane] audit db config fetch: %v", err)
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"dsn":                 eff.DSN,
+		"max_open":            eff.MaxOpen,
+		"max_idle":            eff.MaxIdle,
+		"conn_max_lifetime_s": int(eff.ConnMaxLifetime.Seconds()),
+		"conn_max_idle_s":     int(eff.ConnMaxIdleTime.Seconds()),
+		"version":             eff.Version,
+	})
+}
+
+// commandResult records how a delivered command went. A restart reports
+// before it exits — after that there is no process left to report — so its
+// "done" means "on its way down"; the plugin re-registering is what shows it
+// came back.
+func (h *Handlers) commandResult(c *gin.Context) {
+	var req struct {
+		PluginID    string `json:"plugin_id"`
+		PluginToken string `json:"plugin_token"`
+		OK          bool   `json:"ok"`
+		Message     string `json:"message"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		return
+	}
+	if !h.verifyToken(req.PluginToken, req.PluginID) {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid plugin token"})
+		return
+	}
+	entry, ok := h.reg.Get(req.PluginID)
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "plugin not found"})
+		return
+	}
+	if h.store == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "config store unavailable"})
+		return
+	}
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid command id"})
+		return
+	}
+	cmd, err := h.store.FinishCommand(c.Request.Context(), id, entry.Info.PluginName, req.OK, req.Message)
+	if errors.Is(err, store.ErrNotFound) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "no delivered command with that id for this plugin"})
+		return
+	}
+	if err != nil {
+		log.Printf("[controlplane] command %d result: %v", id, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "config store error"})
+		return
+	}
+	// A plugin restarting stays registered — deregistering would drop its
+	// routes, and callers would get "no plugin handles this route" instead of
+	// "back shortly". The window turns the gap into a 503 with Retry-After and
+	// closes when the plugin registers again.
+	if cmd.Kind == store.CommandRestart && req.OK {
+		h.reg.SetRestartWindow(entry.Info.PluginName, restartWindow)
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// restartWindow bounds how long a restart may keep a plugin's routes in
+// maintenance. Long enough for a container to stop, start and register; short
+// enough that a plugin which never comes back stops being reported as merely
+// restarting.
+const restartWindow = 2 * time.Minute
 
 func (h *Handlers) deregister(c *gin.Context) {
 	var req struct {

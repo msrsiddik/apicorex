@@ -13,6 +13,9 @@ dist/
 # Local config override (commit only .example)
 config.yaml
 
+# The config store (internal/store) and its snapshots, when run outside Docker
+data/
+
 # OS / editor
 .DS_Store
 .idea/

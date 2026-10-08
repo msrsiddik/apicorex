@@ -1,3 +1,13 @@
+// CORE_MASTER_KEY comes from the Jenkins Credentials Store (a Secret text
+// credential with that exact ID), not from a parameter. It seals the secrets
+// in Core's config store, so it must be the same on every deploy: a password
+// parameter is not remembered, and Core started with a different key cannot
+// read anything the dashboard saved. **The credential must exist before the
+// first deploy**, or the Deploy stage fails with "Could not find credentials
+// entry". Generate it once with `openssl rand -base64 32`, and keep a copy
+// somewhere other than Jenkins — losing it loses every stored secret, the
+// snapshots included.
+
 pipeline {
     agent any
 
@@ -41,6 +51,8 @@ pipeline {
         string(name: 'CB_RESET_TIMEOUT', defaultValue: '', description: 'compose default: 30s')
         string(name: 'REQUEST_TIMEOUT', defaultValue: '', description: 'compose default: 30s')
         string(name: 'HEALTH_INTERVAL', defaultValue: '', description: 'compose default: 30s')
+        string(name: 'STORE_SNAPSHOT_INTERVAL', defaultValue: '', description: 'How often the config store snapshots itself onto its volume, Go duration; 0 turns it off (compose default: 24h)')
+        string(name: 'STORE_SNAPSHOT_KEEP', defaultValue: '', description: 'Snapshots kept (compose default: 7)')
         password(name: 'POSTGRES_PASSWORD', defaultValue: '', description: 'compose default: apicorex')
         password(name: 'PLUGIN_API_KEY', defaultValue: '', description: 'Shared secret with plugins (compose default: change-me-plugin-key)')
         password(name: 'APICOREX_SECRET', defaultValue: '', description: 'compose default: apicorex-secret')
@@ -126,6 +138,11 @@ pipeline {
                 CB_RESET_TIMEOUT = "${params.CB_RESET_TIMEOUT}"
                 REQUEST_TIMEOUT = "${params.REQUEST_TIMEOUT}"
                 HEALTH_INTERVAL = "${params.HEALTH_INTERVAL}"
+                STORE_SNAPSHOT_INTERVAL = "${params.STORE_SNAPSHOT_INTERVAL}"
+                STORE_SNAPSHOT_KEEP = "${params.STORE_SNAPSHOT_KEEP}"
+                // From the Credentials Store, not a parameter — see the note
+                // at the top of this file.
+                CORE_MASTER_KEY = credentials('CORE_MASTER_KEY')
                 POSTGRES_PASSWORD = "${params.POSTGRES_PASSWORD}"
                 PLUGIN_API_KEY = "${params.PLUGIN_API_KEY}"
                 APICOREX_SECRET = "${params.APICOREX_SECRET}"

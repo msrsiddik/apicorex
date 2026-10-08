@@ -123,6 +123,77 @@ POST {CORE_URL}/_core/deregister
 
 ---
 
+## Database connection from Core (optional)
+
+An operator can set each plugin's Postgres connection and pool size in the
+gateway dashboard instead of in every deployment's environment. A plugin that
+wants this asks Core for its config **before it opens its pool** — so before
+it registers:
+
+```json
+POST {CORE_URL}/_core/config/db
+{ "api_key": "<PLUGIN_API_KEY>", "plugin": "billing" }
+```
+
+`200` returns:
+
+```json
+{
+  "dsn": "postgres://user:pass@host:5432/db?sslmode=disable",
+  "max_open": 10, "max_idle": 2,
+  "conn_max_lifetime_s": 1800, "conn_max_idle_s": 300,
+  "version": 7
+}
+```
+
+`404` means nothing is configured for you yet, `401` a wrong key, `403` a name
+not in Core's allowlist, `503` that Core cannot open stored secrets (it was
+started without its master key). Retry `503` and connection errors with
+backoff, as you do for registration. Never log the `dsn`.
+
+If your own environment sets `DATABASE_URL`, use that and do not ask Core.
+Either way, say which on every heartbeat, so the dashboard can show whether a
+change has reached you:
+
+```json
+POST {CORE_URL}/_core/heartbeat
+{ "plugin_id": "...", "plugin_token": "...", "db_source": "core", "db_version": 7 }
+```
+
+`db_source` is `"core"` (with the `version` you are running) or `"env"`. Leave
+both out if you have no database.
+
+### What the heartbeat answers
+
+```json
+{ "acknowledged": true, "config_version": 8, "command": { "id": 42, "kind": "reload" } }
+```
+
+- **`config_version`** — the current version of your database config. If you
+  run with `db_source: "core"` and it differs from the version you are
+  running, fetch `/_core/config/db` again and swap pools: open the new one,
+  check it with a ping, switch to it, then close the old one. If the new one
+  fails, keep the old one — a mistyped DSN in the dashboard must not take a
+  running plugin down.
+- **`command`** — at most one, delivered once. `reload` means re-fetch and
+  swap now, as above; a plugin that cannot swap its pool in place may restart
+  instead. `restart` means finish in-flight requests and exit, so your
+  process supervisor (`restart: unless-stopped` in Docker) starts you again.
+  **Do not deregister** on the way out: Core keeps your routes and answers
+  `503` with `Retry-After` until you register again, where deregistering
+  would turn the gap into `404`s. Report the outcome **before** exiting —
+  that report is what opens the window:
+
+```json
+POST {CORE_URL}/_core/commands/42/result
+{ "plugin_id": "...", "plugin_token": "...", "ok": true, "message": "restarting" }
+```
+
+A command waits at most ten minutes for its heartbeat; after that it expires
+rather than running whenever you next come back.
+
+---
+
 ## Tenant context — injected headers
 
 After resolving the device token (by calling Identity's `/internal/introspect`), Core injects **trusted headers** into the request. A client cannot spoof them: Core strips every client-supplied `X-ApiCoreX-*` header on every request, then sets the real values from the introspection result.
