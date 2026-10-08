@@ -71,3 +71,28 @@ func TestClearEndsAWindowEarly(t *testing.T) {
 		t.Fatal("window survived a clear")
 	}
 }
+
+func TestRestartWindowEndsOnRegister(t *testing.T) {
+	r := New()
+	r.SetRestartWindow("schoolyze", time.Minute)
+	if w, ok := r.MaintenanceFor("schoolyze"); !ok || !w.EndsOnRegister {
+		t.Fatalf("restart window not open: %+v", w)
+	}
+	r.EndRestartWindow("schoolyze")
+	if _, ok := r.MaintenanceFor("schoolyze"); ok {
+		t.Fatal("restart window outlived the re-registration")
+	}
+}
+
+func TestRestartWindowLeavesAMigrationWindowAlone(t *testing.T) {
+	// A restart during a migration must neither shorten the migration's
+	// window nor let the plugin's return reopen its tables.
+	r := New()
+	r.SetMaintenance("schoolyze", "moving tables", time.Minute)
+	r.SetRestartWindow("schoolyze", time.Second)
+	r.EndRestartWindow("schoolyze")
+	w, ok := r.MaintenanceFor("schoolyze")
+	if !ok || w.Reason != "moving tables" || w.EndsOnRegister {
+		t.Fatalf("migration window disturbed: %+v %v", w, ok)
+	}
+}

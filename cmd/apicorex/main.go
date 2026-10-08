@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+	"github.com/msrsiddik/apicorex/internal/adminapi"
 	"github.com/msrsiddik/apicorex/internal/auth"
 	"github.com/msrsiddik/apicorex/internal/config"
 	"github.com/msrsiddik/apicorex/internal/controlplane"
@@ -25,6 +26,10 @@ import (
 
 func main() {
 	godotenv.Load()
+
+	if len(os.Args) > 1 && os.Args[1] == "store" {
+		os.Exit(runStoreCommand(os.Args[2:]))
+	}
 
 	httpAddr := envOr("HTTP_PORT", ":8080")
 	pluginAPIKey := envOr("PLUGIN_API_KEY", "")
@@ -45,6 +50,10 @@ func main() {
 		log.Printf("[core] distributed tracing enabled (OTLP)")
 		defer traceShutdown(ctx0)
 	}
+
+	st := openStore(ctx0)
+	defer st.Close()
+	seedDefaultDBConfig(ctx0, st)
 
 	reg := registry.New()
 	cb := protection.NewCircuitBreaker(cfg.Default.CBThreshold, cfg.Default.CBResetTimeout)
@@ -71,6 +80,8 @@ func main() {
 		log.Println("[warn] APICOREX_SECRET not set — gateway dashboard login disabled")
 	}
 	cpHandlers := controlplane.New(reg, disp, injector, pluginAPIKey, allowlist, pluginAPIKey, apicorexSecret)
+	cpHandlers.SetStore(st)
+	cpHandlers.MountAdmin(adminapi.New(st, reg, cpHandlers.LoginEnabled(), adminapi.PgxProber{}).Mount)
 	httpSrv := server.NewHTTP(reg, disp, injector, introspector, domainResolver, cpHandlers, serveDashboard, httpAddr)
 
 	// The gate a reverse proxy asks before issuing a certificate for a hostname
@@ -98,6 +109,11 @@ func main() {
 		// gateway with a long tail of one-time/inactive tenants doesn't grow
 		// its per-tenant rate-limiter maps unbounded.
 		disp.RunTenantLimiterSweep(gCtx, 5*time.Minute, 30*time.Minute)
+		return nil
+	})
+	g.Go(func() error {
+		dir, interval, keep := snapshotSettings()
+		st.RunSnapshots(gCtx, dir, interval, keep)
 		return nil
 	})
 	g.Go(func() error {

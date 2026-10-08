@@ -32,6 +32,9 @@ type Maintenance struct {
 	Reason string    `json:"reason"`
 	Since  time.Time `json:"since"`
 	Until  time.Time `json:"until"`
+	// EndsOnRegister marks a window Core opened itself for a restart: it
+	// closes when the plugin registers again rather than when someone says so.
+	EndsOnRegister bool `json:"ends_on_register,omitempty"`
 }
 
 type maintenanceStore struct {
@@ -66,6 +69,36 @@ func (r *Registry) SetMaintenance(pluginName, reason string, d time.Duration) Ma
 	}
 	r.maint.windows[pluginName] = w
 	return w
+}
+
+// SetRestartWindow covers a plugin restarting on an operator's command, so
+// callers get a 503 with Retry-After for those seconds instead of a dead
+// connection. It ends when the plugin registers again (EndRestartWindow) or
+// after d, whichever comes first.
+//
+// It never replaces a window someone else opened. A migration holding the
+// plugin off its tables outranks a restart, and taking the window over would
+// hand it to EndRestartWindow — which would then reopen the tables the moment
+// the plugin came back, mid-migration.
+func (r *Registry) SetRestartWindow(pluginName string, d time.Duration) {
+	r.maint.mu.Lock()
+	defer r.maint.mu.Unlock()
+	if prev, ok := r.maint.windows[pluginName]; ok && time.Now().Before(prev.Until) && !prev.EndsOnRegister {
+		return
+	}
+	now := time.Now()
+	r.maint.windows[pluginName] = Maintenance{
+		Reason: "restarting", Since: now, Until: now.Add(d), EndsOnRegister: true,
+	}
+}
+
+// EndRestartWindow closes a window SetRestartWindow opened, and only that kind.
+func (r *Registry) EndRestartWindow(pluginName string) {
+	r.maint.mu.Lock()
+	defer r.maint.mu.Unlock()
+	if w, ok := r.maint.windows[pluginName]; ok && w.EndsOnRegister {
+		delete(r.maint.windows, pluginName)
+	}
 }
 
 // ClearMaintenance closes a window early, which is the normal ending.

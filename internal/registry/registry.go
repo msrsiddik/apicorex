@@ -1,5 +1,6 @@
-// Package registry is the in-memory store of registered plugins. Core keeps no
-// database; plugins live here only while running. Each entry holds the plugin's
+// Package registry is the in-memory store of registered plugins. Nothing here
+// is persisted (the config store, internal/store, is separate); plugins live
+// here only while running. Each entry holds the plugin's
 // manifest, target URL, and reverse proxy. The package is the source of truth
 // for routing and the /plugins listing.
 package registry
@@ -35,6 +36,13 @@ type PluginEntry struct {
 	RegisteredAt  time.Time
 	LastHeartbeat time.Time
 	Alive         bool
+	// DBSource and DBVersion are what the plugin last reported, on its
+	// heartbeat, about its own database pool: "core" (config fetched from
+	// Core, at DBVersion), "env" (DATABASE_URL in its environment, which the
+	// dashboard cannot change), or "" for a plugin that says nothing — one
+	// without a database, or built before plugins reported it.
+	DBSource  string
+	DBVersion int64
 }
 
 // Registry is the in-memory store of registered plugins, keyed by plugin ID.
@@ -99,6 +107,28 @@ func (r *Registry) Heartbeat(pluginID string) error {
 	return nil
 }
 
+// ReportDB records what a plugin said about its database pool on a heartbeat.
+func (r *Registry) ReportDB(pluginID, source string, version int64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if entry, ok := r.plugins[pluginID]; ok {
+		entry.DBSource = source
+		entry.DBVersion = version
+	}
+}
+
+// DBStateByName returns what a registered plugin last reported about its
+// database pool. ok is false when no plugin of that name is registered.
+func (r *Registry) DBStateByName(name string) (source string, version int64, ok bool) {
+	e, found := r.FindByName(name)
+	if !found {
+		return "", 0, false
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return e.DBSource, e.DBVersion, true
+}
+
 // Deregister removes a plugin from the registry.
 func (r *Registry) Deregister(pluginID string) {
 	r.mu.Lock()
@@ -146,6 +176,19 @@ func (r *Registry) FindByName(name string) (*PluginEntry, bool) {
 		}
 	}
 	return nil, false
+}
+
+// Names returns the distinct names of every registered plugin.
+func (r *Registry) Names() []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, e := range r.List() {
+		if n := e.Info.PluginName; !seen[n] {
+			seen[n] = true
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 // IDsByName returns the IDs of all registered plugins with the given name.
