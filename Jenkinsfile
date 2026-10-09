@@ -14,7 +14,11 @@ pipeline {
     options {
         timestamps()
         disableConcurrentBuilds()
-        timeout(time: 15, unit: 'MINUTES')
+        // Room for a build with an empty compile cache — a fresh agent, or a
+        // pruned one — which takes most of fifteen minutes on its own. Was 15,
+        // which a cold build of the image first overran on 2026-10-09: the job
+        // was killed mid-compile and the old container kept serving.
+        timeout(time: 40, unit: 'MINUTES')
     }
 
     // All blank by default — docker-compose.yml's ${VAR:-default} only falls
