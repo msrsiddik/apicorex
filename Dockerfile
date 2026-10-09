@@ -25,7 +25,15 @@ COPY . .
 COPY --from=dashboard /admin/out ./cmd/apicorex/admin/out
 
 # Build a static, stripped binary.
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
+#
+# The compile cache is mounted rather than left in the layer: COPY . . above
+# changes on every commit, so without it every build compiles every package
+# from nothing — about six minutes of CPU on a fast machine, most of it
+# dependencies that did not change (the SQLite driver alone is two). With it,
+# only what changed is compiled. The first build on a fresh agent still pays
+# the full cost; the Jenkinsfile's timeout leaves room for that.
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
     -o /out/apicorex ./cmd/apicorex
 
 # ── Runtime stage ──────────────────────────────────────────────────────────
