@@ -13,6 +13,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { EmptyState } from "@/components/ui/empty-state";
+import PluginCommands from "@/components/PluginCommands";
 import { Skeleton } from "@/components/ui/skeleton";
 import { relativeTime } from "@/lib/utils";
 import { ChevronDown, ChevronRight, Plug, RotateCcw, XCircle } from "lucide-react";
@@ -205,6 +206,7 @@ export default function PluginsPanel({
                               {actionError[p.plugin_id]}
                             </p>
                           )}
+                          <PluginCommands plugin={p.plugin_name} />
                           <div className="px-4 py-3">
                             {p.routes && p.routes.length > 0 ? (
                               <table className="w-full text-xs">
