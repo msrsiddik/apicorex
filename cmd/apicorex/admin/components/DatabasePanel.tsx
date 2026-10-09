@@ -290,7 +290,8 @@ function Running({ p }: { p: DBPluginView }) {
       <div className="mt-1 text-xs text-ok-foreground">running the latest (v{p.running_version})</div>
     ) : (
       <div className="mt-1 text-xs text-warn-foreground">
-        running v{p.running_version}, latest is v{p.version} — picks it up on its next heartbeat
+        running v{p.running_version}, latest is v{p.version} — picks it up on its next heartbeat, or, if
+        it cannot swap its pool in place, when restarted from Plugins &amp; routes
       </div>
     );
   }

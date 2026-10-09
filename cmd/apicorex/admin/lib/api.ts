@@ -281,6 +281,32 @@ export function fetchAudit(before?: number): Promise<AuditEntry[]> {
   return adminJSON("GET", `/_core/admin/audit${q}`);
 }
 
+// ── Commands to a plugin ────────────────────────────────────────────────────
+// Delivered on the plugin's next heartbeat (every ~15s), so a command shows
+// as pending until then.
+
+export type CommandKind = "restart" | "reload";
+
+export interface PluginCommand {
+  id: number;
+  plugin: string;
+  kind: CommandKind;
+  state: "pending" | "delivered" | "done" | "failed" | "superseded" | "expired";
+  result: string;
+  requested_at: string;
+  requested_by: string;
+  delivered_at?: string;
+  finished_at?: string;
+}
+
+export function queueCommand(plugin: string, kind: CommandKind): Promise<PluginCommand> {
+  return adminJSON("POST", `/_core/admin/commands/${enc(plugin)}`, { kind });
+}
+
+export function fetchCommands(plugin: string): Promise<PluginCommand[]> {
+  return adminJSON("GET", `/_core/admin/commands/${enc(plugin)}?limit=5`);
+}
+
 // ── Prometheus text-exposition parsing ──────────────────────────────────────
 // /metrics is plain-text (no JSON endpoint exists for it), so we parse just
 // the handful of metric families the dashboard cares about. Lines look like:
