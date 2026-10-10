@@ -149,12 +149,18 @@ func (h *Handlers) setMaintenance(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
 		return
 	}
-	if h.apiKey != "" && req.APIKey != h.apiKey {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid api key"})
+	who, ok := h.authenticate(c, req.APIKey)
+	if !ok {
 		return
 	}
 	if req.Plugin == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "plugin required"})
+		return
+	}
+	// With its own key a plugin may hold only itself off its tables; Identity
+	// may hold any plugin, since it runs every plugin's structural migrations.
+	if !who.shared && who.plugin != req.Plugin && who.plugin != identityPlugin {
+		c.JSON(http.StatusForbidden, gin.H{"error": fmt.Sprintf("%q may open a maintenance window only on itself", who.plugin)})
 		return
 	}
 	if !req.On {
@@ -314,8 +320,8 @@ func (h *Handlers) register(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
 		return
 	}
-	if h.apiKey != "" && req.APIKey != h.apiKey {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid api key"})
+	who, ok := h.authenticate(c, req.APIKey)
+	if !ok {
 		return
 	}
 	if req.BaseURL == "" {
@@ -327,6 +333,15 @@ func (h *Handlers) register(c *gin.Context) {
 	m, err := h.pullManifest(req.BaseURL)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("cannot pull manifest: %v", err)})
+		return
+	}
+
+	// A plugin's own key registers that plugin and no other. With the shared
+	// key anyone could register under any name — including identity, which
+	// Core sends every token to — and this is what closes that.
+	if !who.shared && who.plugin != m.Name {
+		log.Printf("[controlplane] refused %q registering with %q's key from %s", m.Name, who.plugin, req.BaseURL)
+		c.JSON(http.StatusForbidden, gin.H{"error": fmt.Sprintf("this key belongs to %q, not %q", who.plugin, m.Name)})
 		return
 	}
 
@@ -351,6 +366,11 @@ func (h *Handlers) register(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	auth := "own"
+	if who.shared {
+		auth = "shared"
+	}
+	h.reg.SetAuth(pluginID, auth)
 	h.disp.AddRoutes(pluginID, m.Name, m.PluginType, m.Routes)
 	// Back from a dashboard restart: reopen its routes now rather than when
 	// the window would have run out.
@@ -446,16 +466,11 @@ func (h *Handlers) dbConfig(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
 		return
 	}
-	if h.apiKey != "" && subtle.ConstantTimeCompare([]byte(req.APIKey), []byte(h.apiKey)) != 1 {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid api key"})
+	who, ok := h.authenticate(c, req.APIKey)
+	if !ok {
 		return
 	}
-	if len(h.allowlist) > 0 && !h.allowlist[req.Plugin] {
-		c.JSON(http.StatusForbidden, gin.H{"error": fmt.Sprintf("plugin %q not in allowlist", req.Plugin)})
-		return
-	}
-	if req.Plugin == store.DefaultPlugin || store.ValidatePluginName(req.Plugin) != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid plugin name"})
+	if req.Plugin, ok = h.pluginFor(c, who, req.Plugin); !ok {
 		return
 	}
 	if h.store == nil {
@@ -511,16 +526,11 @@ func (h *Handlers) settingsConfig(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
 		return
 	}
-	if h.apiKey != "" && subtle.ConstantTimeCompare([]byte(req.APIKey), []byte(h.apiKey)) != 1 {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid api key"})
+	who, ok := h.authenticate(c, req.APIKey)
+	if !ok {
 		return
 	}
-	if len(h.allowlist) > 0 && !h.allowlist[req.Plugin] {
-		c.JSON(http.StatusForbidden, gin.H{"error": fmt.Sprintf("plugin %q not in allowlist", req.Plugin)})
-		return
-	}
-	if req.Plugin == store.DefaultPlugin || store.ValidatePluginName(req.Plugin) != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid plugin name"})
+	if req.Plugin, ok = h.pluginFor(c, who, req.Plugin); !ok {
 		return
 	}
 	if h.store == nil {
@@ -631,6 +641,87 @@ func (h *Handlers) deregister(c *gin.Context) {
 	protection.PluginsRegistered.Set(float64(len(h.reg.List())))
 	log.Printf("[controlplane] deregistered %s", req.PluginID)
 	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// identityPlugin is the plugin Core already relies on by name for
+// introspection and custom domains. Its key alone may open a maintenance
+// window on another plugin: it does so around structural migrations.
+const identityPlugin = "identity"
+
+// caller is who presented an API key: a plugin by its own key, or anyone
+// holding the shared PLUGIN_API_KEY.
+type caller struct {
+	plugin string // set for a plugin's own key
+	shared bool
+}
+
+// authenticate identifies the caller by the API key it presented, writing the
+// refusal itself when there is none. A plugin's own key names the plugin; the
+// shared key names nobody, and is accepted only while the dashboard still
+// allows it (and, as before, anything is accepted when no shared key is
+// configured — dev).
+func (h *Handlers) authenticate(c *gin.Context, key string) (caller, bool) {
+	ctx := c.Request.Context()
+	if h.store != nil && key != "" {
+		p, ok, err := h.store.LookupPluginKey(ctx, key)
+		if err != nil {
+			log.Printf("[controlplane] key lookup: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "config store error"})
+			return caller{}, false
+		}
+		if ok {
+			return caller{plugin: p}, true
+		}
+		// Shaped like a key of Core's own and not found: revoked, or never
+		// issued here. Say that, rather than fall through to the shared key
+		// and send the operator looking at the wrong thing.
+		if strings.HasPrefix(key, "akx_") {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "this plugin key is unknown or has been revoked; issue a new one on the dashboard (API keys)"})
+			return caller{}, false
+		}
+	}
+	if h.store != nil {
+		accept, err := h.store.AcceptSharedKey(ctx)
+		if err != nil {
+			// Keep the default rather than lock every plugin out over a
+			// read error; the error is logged where someone will look.
+			log.Printf("[controlplane] reading accept-shared-key: %v", err)
+			accept = true
+		}
+		if !accept {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "the shared PLUGIN_API_KEY is no longer accepted; give this plugin its own key (CORE_API_KEY) from the dashboard"})
+			return caller{}, false
+		}
+	}
+	if h.apiKey != "" && subtle.ConstantTimeCompare([]byte(key), []byte(h.apiKey)) != 1 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid api key"})
+		return caller{}, false
+	}
+	return caller{shared: true}, true
+}
+
+// pluginFor resolves which plugin a config request is about. A plugin's own
+// key decides it, and naming another plugin in the body is refused rather than
+// ignored — that is a misconfigured deploy, and saying so beats quietly
+// handing over the right plugin's config to the wrong process. With the
+// shared key the body is all there is, as before.
+func (h *Handlers) pluginFor(c *gin.Context, who caller, named string) (string, bool) {
+	if !who.shared {
+		if named != "" && named != who.plugin {
+			c.JSON(http.StatusForbidden, gin.H{"error": fmt.Sprintf("this key belongs to %q, not %q", who.plugin, named)})
+			return "", false
+		}
+		named = who.plugin
+	}
+	if len(h.allowlist) > 0 && !h.allowlist[named] {
+		c.JSON(http.StatusForbidden, gin.H{"error": fmt.Sprintf("plugin %q not in allowlist", named)})
+		return "", false
+	}
+	if named == store.DefaultPlugin || store.ValidatePluginName(named) != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid plugin name"})
+		return "", false
+	}
+	return named, true
 }
 
 // verifyToken checks the signed plugin token and that it matches the claimed plugin ID.

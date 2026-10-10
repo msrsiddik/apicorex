@@ -97,4 +97,34 @@ var migrations = []string{
 		updated_by TEXT NOT NULL,
 		PRIMARY KEY (plugin, key)
 	);`,
+
+	// 5: an API key per plugin, and Core's own settings.
+	//
+	// Only a key's SHA-256 is kept, so a copy of the store reveals no key. A
+	// plugin may hold more than one at once, so a key can be replaced without
+	// downtime: issue the new, deploy it, revoke the old. key_hint is the last
+	// characters, for telling keys apart on screen.
+	//
+	// core_settings holds switches about Core itself — whether the shared
+	// PLUGIN_API_KEY is still accepted, for a start — that an operator flips
+	// from the dashboard. Not plugin settings, which are plugin_settings.
+	`CREATE TABLE plugin_keys (
+		id           INTEGER PRIMARY KEY AUTOINCREMENT,
+		plugin       TEXT NOT NULL,
+		key_hash     TEXT NOT NULL UNIQUE,
+		key_hint     TEXT NOT NULL,
+		created_at   TEXT NOT NULL,
+		created_by   TEXT NOT NULL,
+		last_used_at TEXT,
+		revoked_at   TEXT,
+		revoked_by   TEXT
+	);
+	CREATE INDEX plugin_keys_plugin ON plugin_keys (plugin);
+
+	CREATE TABLE core_settings (
+		key        TEXT PRIMARY KEY,
+		value      TEXT NOT NULL,
+		updated_at TEXT NOT NULL,
+		updated_by TEXT NOT NULL
+	);`,
 }
