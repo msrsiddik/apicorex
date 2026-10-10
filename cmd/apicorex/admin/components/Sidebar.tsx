@@ -2,14 +2,15 @@
 
 import { cn } from "@/lib/utils";
 import { clearSession } from "@/lib/api";
-import { LayoutDashboard, Plug, FileText, Activity, LogOut, Database, ScrollText, SlidersHorizontal, KeyRound, Archive } from "lucide-react";
+import { LayoutDashboard, Plug, FileText, Activity, LogOut, Database, ScrollText, SlidersHorizontal, KeyRound, Archive, ShieldCheck } from "lucide-react";
 
-export type SectionId = "overview" | "plugins" | "database" | "settings" | "keys" | "backups" | "audit";
+export type SectionId = "overview" | "plugins" | "database" | "protection" | "settings" | "keys" | "backups" | "audit";
 
 const NAV: { id: SectionId; label: string; Icon: typeof Plug }[] = [
   { id: "overview", label: "Overview", Icon: LayoutDashboard },
   { id: "plugins", label: "Plugins & routes", Icon: Plug },
   { id: "database", label: "Databases", Icon: Database },
+  { id: "protection", label: "Protection", Icon: ShieldCheck },
   { id: "settings", label: "Settings", Icon: SlidersHorizontal },
   { id: "keys", label: "API keys", Icon: KeyRound },
   { id: "backups", label: "Store backups", Icon: Archive },

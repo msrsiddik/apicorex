@@ -267,6 +267,81 @@ export function fetchPostgres(): Promise<ProbeResponse> {
   return adminJSON("GET", "/_core/admin/postgres");
 }
 
+// ── Config store: protection limits ────────────────────────────────────────
+// Durations are milliseconds. In a stored row null means inherit: from the
+// default row, then Core's environment and CONFIG_FILE.
+
+export interface ProtectionFields {
+  rate_per_sec: number | null;
+  rate_burst: number | null;
+  tenant_rate_per_sec: number | null;
+  tenant_rate_burst: number | null;
+  bulkhead_max: number | null;
+  cb_threshold: number | null;
+  cb_reset_timeout_ms: number | null;
+  request_timeout_ms: number | null;
+}
+
+export type ProtectionKey = keyof ProtectionFields;
+export type ResolvedLimits = { [K in ProtectionKey]: number };
+
+export interface ProtectionRow {
+  plugin: string;
+  limits: ProtectionFields;
+  version: number;
+  updated_at: string;
+  updated_by: string;
+}
+
+export interface ProtectionView {
+  plugin: string;
+  registered: boolean;
+  effective: ResolvedLimits;
+  // Where each field comes from: the plugin's own name, "*" or "config".
+  source: Record<ProtectionKey, string>;
+  // What its instances run under now; null when it is not registered.
+  running: ResolvedLimits | null;
+  version: number;
+}
+
+export interface ProtectionOverview {
+  writable: boolean;
+  config: ResolvedLimits;
+  rows: ProtectionRow[];
+  default: ProtectionView;
+  plugins: ProtectionView[];
+}
+
+export interface ProtectionVersion {
+  version: number;
+  plugin: string;
+  action: "save" | "delete" | "rollback";
+  limits: ProtectionFields;
+  note: string;
+  saved_at: string;
+  saved_by: string;
+}
+
+export function fetchProtection(): Promise<ProtectionOverview> {
+  return adminJSON("GET", "/_core/admin/protection");
+}
+
+export function saveProtection(plugin: string, limits: ProtectionFields, note: string): Promise<ProtectionView> {
+  return adminJSON("PUT", `/_core/admin/protection/${enc(plugin)}`, { limits, note });
+}
+
+export function deleteProtection(plugin: string): Promise<ProtectionView> {
+  return adminJSON("DELETE", `/_core/admin/protection/${enc(plugin)}`);
+}
+
+export function fetchProtectionHistory(plugin: string): Promise<ProtectionVersion[]> {
+  return adminJSON("GET", `/_core/admin/protection/${enc(plugin)}/history`);
+}
+
+export function rollbackProtection(plugin: string, version: number): Promise<ProtectionView> {
+  return adminJSON("POST", `/_core/admin/protection/${enc(plugin)}/rollback`, { version });
+}
+
 export interface AuditEntry {
   id: number;
   at: string;
