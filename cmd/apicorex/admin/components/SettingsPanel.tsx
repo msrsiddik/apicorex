@@ -5,6 +5,7 @@ import {
   fetchSettings,
   fetchSettingsHistory,
   queueCommand,
+  restoreSetting,
   saveSettings,
   type PluginSettings,
   type SettingChange,
@@ -50,7 +51,8 @@ export default function SettingsPanel() {
         <p className="text-sm text-muted-foreground">
           What each plugin lets you set here instead of in its environment. A variable set in the
           plugin's environment still wins — that is the way back if this screen is ever unavailable.
-          Changes take effect when the plugin restarts.
+          Changes take effect when the plugin restarts. Secrets are sealed, never shown again, and reach a
+          plugin only when it uses its own key (API keys).
         </p>
       </div>
 
@@ -91,7 +93,22 @@ function PluginCard({ p, onSaved }: { p: PluginSettings; onSaved: () => void }) 
     try {
       const values: Record<string, string | null> = {};
       for (const [k, v] of Object.entries(draft)) values[k] = v === "" ? null : v;
-      await saveSettings(p.plugin, values, note);
+      // A set-once value that is already set — an encryption or signing key —
+      // is replaced only after saying what that breaks, by name.
+      const confirm: string[] = [];
+      for (const k of Object.keys(values)) {
+        const s = p.settings.find((x) => x.key === k);
+        if (!s?.set_once || !s.set) continue;
+        const typed = window.prompt(
+          `${k} is set-once. Replacing or clearing it breaks what was encrypted or signed with the current value.\n\n${s.description ?? ""}\n\nType ${k} to go ahead.`,
+        );
+        if (typed !== k) {
+          setBusy(false);
+          return;
+        }
+        confirm.push(k);
+      }
+      await saveSettings(p.plugin, values, note, confirm);
       setDraft({});
       setNote("");
       onSaved();
@@ -201,7 +218,7 @@ function PluginCard({ p, onSaved }: { p: PluginSettings; onSaved: () => void }) 
 
       {showHistory && (
         <div className="border-t p-5">
-          <SettingsHistory plugin={p.plugin} />
+          <SettingsHistory plugin={p.plugin} onRestored={onSaved} />
         </div>
       )}
     </div>
@@ -214,14 +231,34 @@ function SettingRow({ s, draft, onChange }: { s: SettingView; draft: string | un
   const placeholder = s.default ? `default: ${s.default}` : "not set";
 
   if (s.secret) {
+    // The value is never sent back; the field only ever takes a new one.
     return (
       <tr className="border-t align-top">
         <td className="py-2 pr-3">
-          <div className="font-mono text-xs">{s.key}</div>
+          <div className="flex items-center gap-1.5">
+            <span className="font-mono text-xs">{s.key}</span>
+            <Badge variant="outline">secret</Badge>
+            {s.set_once && <Badge variant="warn">set-once</Badge>}
+          </div>
           {s.description && <div className="text-xs text-muted-foreground">{s.description}</div>}
         </td>
-        <td className="py-2 pr-3 text-xs text-muted-foreground" colSpan={2}>
-          Secret — set in the plugin's environment for now.
+        <td className="py-2 pr-3">
+          <Input
+            type="password"
+            autoComplete="new-password"
+            className="max-w-sm font-mono"
+            placeholder={s.set ? "set — type to replace" : "not set"}
+            value={draft ?? ""}
+            onChange={(e) => onChange(e.target.value)}
+          />
+          {s.set && s.updated_at && (
+            <div className="mt-1 text-xs text-muted-foreground">
+              set {relativeTime(s.updated_at)} by {s.updated_by}
+            </div>
+          )}
+        </td>
+        <td className="py-2">
+          <Badge variant={src.variant}>{src.label}</Badge>
         </td>
       </tr>
     );
@@ -279,12 +316,27 @@ function SettingRow({ s, draft, onChange }: { s: SettingView; draft: string | un
   );
 }
 
-function SettingsHistory({ plugin }: { plugin: string }) {
+function SettingsHistory({ plugin, onRestored }: { plugin: string; onRestored: () => void }) {
   const [items, setItems] = useState<SettingChange[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  useEffect(() => {
+  const load = useCallback(() => {
     fetchSettingsHistory(plugin).then(setItems, (e) => setErr(e instanceof Error ? e.message : String(e)));
   }, [plugin]);
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function restore(c: SettingChange) {
+    const what = c.cleared ? "cleared" : c.secret ? "the secret value it had" : c.value;
+    if (!window.confirm(`Make ${c.key} ${what} again (version ${c.version})? Saved as a new version; applies at the next restart.`)) return;
+    try {
+      await restoreSetting(plugin, c.version);
+      load();
+      onRestored();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  }
   if (err) return <p className="text-xs text-danger">{err}</p>;
   if (!items) return <Skeleton className="h-16 w-full" />;
   if (items.length === 0) return <p className="text-xs text-muted-foreground">No changes recorded yet.</p>;
@@ -295,10 +347,23 @@ function SettingsHistory({ plugin }: { plugin: string }) {
           <tr key={c.version} className="border-t border-border/50">
             <td className="py-1 pr-3 font-mono">v{c.version}</td>
             <td className="py-1 pr-3 font-mono">{c.key}</td>
-            <td className="py-1 pr-3 font-mono">{c.value === null ? <span className="text-muted-foreground">cleared</span> : c.value}</td>
+            <td className="py-1 pr-3 font-mono">
+              {c.cleared ? (
+                <span className="text-muted-foreground">cleared</span>
+              ) : c.secret ? (
+                <span className="text-muted-foreground">secret set</span>
+              ) : (
+                c.value
+              )}
+            </td>
             <td className="py-1 pr-3 text-muted-foreground">{c.note}</td>
-            <td className="py-1 text-right text-muted-foreground">
+            <td className="py-1 pr-3 text-right text-muted-foreground">
               {relativeTime(c.saved_at)} · {c.saved_by}
+            </td>
+            <td className="py-1 text-right">
+              <button className="underline" onClick={() => restore(c)}>
+                restore
+              </button>
             </td>
           </tr>
         ))}

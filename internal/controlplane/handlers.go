@@ -4,6 +4,7 @@
 package controlplane
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -371,6 +372,16 @@ func (h *Handlers) register(c *gin.Context) {
 		auth = "shared"
 	}
 	h.reg.SetAuth(pluginID, auth)
+	// Its settings declarations outlive this registration, so the dashboard
+	// can still validate and save a value while the plugin is down — which is
+	// when a missing or broken setting needs fixing. A failure here costs only
+	// that, so it is logged and registration goes on.
+	if h.store != nil && store.ValidatePluginName(m.Name) == nil {
+		decl, _ := json.Marshal(m.Settings)
+		if err := h.store.SaveDeclarations(c.Request.Context(), m.Name, decl); err != nil {
+			log.Printf("[controlplane] record %s's settings declarations: %v", m.Name, err)
+		}
+	}
 	h.disp.AddRoutes(pluginID, m.Name, m.PluginType, m.Routes)
 	// Back from a dashboard restart: reopen its routes now rather than when
 	// the window would have run out.
@@ -538,8 +549,15 @@ func (h *Handlers) settingsConfig(c *gin.Context) {
 		return
 	}
 	ctx := c.Request.Context()
-	set, err := h.store.ListSettings(ctx, req.Plugin)
-	if err != nil {
+	// Secrets go only to the plugin itself, which a plugin's own key proves
+	// and the shared key does not: anyone holding that could otherwise ask
+	// for any plugin's secrets by naming it.
+	values, withheld, err := h.store.SettingsForPlugin(ctx, req.Plugin, !who.shared)
+	switch {
+	case errors.Is(err, store.ErrNoMasterKey), errors.Is(err, store.ErrWrongKey):
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Core cannot open stored secrets: " + err.Error()})
+		return
+	case err != nil:
 		log.Printf("[controlplane] settings for %s: %v", req.Plugin, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "config store error"})
 		return
@@ -550,11 +568,32 @@ func (h *Handlers) settingsConfig(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "config store error"})
 		return
 	}
-	values := make(map[string]string, len(set))
-	for k, v := range set {
-		values[k] = v.Value
+	if withheld > 0 {
+		log.Printf("[controlplane] %d secret setting(s) withheld from %s: it used the shared key", withheld, req.Plugin)
+	} else if !who.shared {
+		// Handing out secrets is worth an audit line; their values never go
+		// there. Only when there were secrets to hand out.
+		if n := countSecrets(ctx, h.store, req.Plugin); n > 0 {
+			if err := h.store.Audit(ctx, "plugin:"+req.Plugin+"@"+c.ClientIP(), "settings.fetch_secrets", req.Plugin, fmt.Sprintf("%d secret(s), version %d", n, version)); err != nil {
+				log.Printf("[controlplane] audit secrets fetch: %v", err)
+			}
+		}
 	}
-	c.JSON(http.StatusOK, gin.H{"values": values, "version": version})
+	c.JSON(http.StatusOK, gin.H{"values": values, "version": version, "secrets_withheld": withheld})
+}
+
+func countSecrets(ctx context.Context, st *store.Store, plugin string) int {
+	set, err := st.ListSettings(ctx, plugin)
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, v := range set {
+		if v.Secret {
+			n++
+		}
+	}
+	return n
 }
 
 // commandResult records how a delivered command went. A restart reports

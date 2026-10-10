@@ -127,4 +127,22 @@ var migrations = []string{
 		updated_at TEXT NOT NULL,
 		updated_by TEXT NOT NULL
 	);`,
+
+	// 6: secret plugin settings. A secret's value — in the row and in its
+	// history — is sealed under CORE_MASTER_KEY and bound to its plugin and
+	// key, as DSNs are; the flag says which values are sealed, and so which
+	// may never leave Core except to the plugin itself.
+	`ALTER TABLE plugin_settings ADD COLUMN secret INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE plugin_settings_history ADD COLUMN secret INTEGER NOT NULL DEFAULT 0;`,
+
+	// 7: each plugin's settings declarations, as last seen at registration.
+	// The dashboard validates against them, and must be able to when the
+	// plugin is down — a plugin that will not start without a setting, or one
+	// crash-looping on a bad value, is exactly when it is needed. Kept as the
+	// manifest sent them: Core does not interpret them beyond validating.
+	`CREATE TABLE plugin_declarations (
+		plugin     TEXT PRIMARY KEY,
+		settings   TEXT NOT NULL,
+		updated_at TEXT NOT NULL
+	);`,
 }

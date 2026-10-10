@@ -1,6 +1,7 @@
 package adminapi
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"sort"
@@ -40,15 +41,51 @@ type pluginSettingsView struct {
 	LoadsSettings bool `json:"loads_settings"`
 }
 
+// declarations returns what plugin declares: from the running plugin when
+// it is registered, else as last recorded at a registration. ok is false for
+// a plugin Core has never seen register.
+func (h *Handlers) declarations(c *gin.Context, plugin string) (decl []manifest.Setting, registered, ok bool, err error) {
+	if st, reg := h.reg.SettingsStateByName(plugin); reg {
+		return st.Declared, true, true, nil
+	}
+	raw, _, seen, err := h.store.Declarations(c.Request.Context(), plugin)
+	if err != nil || !seen {
+		return nil, false, false, err
+	}
+	if err := json.Unmarshal(raw, &decl); err != nil {
+		return nil, false, false, err
+	}
+	return decl, false, true, nil
+}
+
 func (h *Handlers) listSettings(c *gin.Context) {
 	ctx := c.Request.Context()
 	out := []pluginSettingsView{}
-	for _, name := range h.reg.Names() {
+	names := map[string]bool{}
+	for _, n := range h.reg.Names() {
+		names[n] = true
+	}
+	// A plugin that is down is listed too, from its last declarations: it is
+	// often the one whose settings need changing.
+	known, err := h.store.DeclaredPlugins(ctx)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	for _, n := range known {
+		names[n] = true
+	}
+	for name := range names {
 		if store.ValidatePluginName(name) != nil {
 			continue
 		}
-		st, ok := h.reg.SettingsStateByName(name)
-		running, fromEnv, decl := st.Version, st.FromEnv, st.Declared
+		st, _ := h.reg.SettingsStateByName(name)
+		decl, ok, _, err := h.declarations(c, name)
+		if err != nil {
+			fail(c, err)
+			return
+		}
+		running, fromEnv := st.Version, st.FromEnv
 		set, err := h.store.ListSettings(ctx, name)
 		if err != nil {
 			fail(c, err)
@@ -96,22 +133,37 @@ func (h *Handlers) saveSettings(c *gin.Context) {
 	var req struct {
 		Values map[string]*string `json:"values"`
 		Note   string             `json:"note"`
+		// Confirm names each set-once key this save replaces or clears.
+		Confirm []string `json:"confirm"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
 		return
 	}
-	st, ok := h.reg.SettingsStateByName(plugin)
-	decl := st.Declared
-	if !ok {
-		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("%s is not registered, so its settings and their types are not known; start it first", plugin)})
+	decl, _, known, err := h.declarations(c, plugin)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	if !known {
+		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("%s has never registered, so its settings and their types are not known; start it once first", plugin)})
 		return
 	}
 	byKey := map[string]manifest.Setting{}
 	for _, d := range decl {
 		byKey[d.Key] = d
 	}
+	current, err := h.store.ListSettings(c.Request.Context(), plugin)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	confirmed := map[string]bool{}
+	for _, k := range req.Confirm {
+		confirmed[k] = true
+	}
 	changes := map[string]*string{}
+	secret := map[string]bool{}
 	for k, v := range req.Values {
 		if v != nil && *v == "" {
 			v = nil
@@ -121,18 +173,27 @@ func (h *Handlers) saveSettings(c *gin.Context) {
 		case !declared && v != nil:
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%s does not declare a setting %s", plugin, k)})
 			return
-		case declared && d.Secret:
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%s is a secret; secrets stay in the plugin's environment for now", k)})
-			return
 		case v != nil:
 			if err := d.Validate(*v); err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 				return
 			}
 		}
+		// Replacing or clearing a set-once value breaks what depends on it —
+		// stored passwords sealed with an encryption key, sessions signed with
+		// a signing key — so it is done only when asked for by name.
+		if _, isSet := current[k]; declared && d.SetOnce && isSet && !confirmed[k] {
+			c.JSON(http.StatusConflict, gin.H{
+				"error":       fmt.Sprintf("%s is set-once: replacing or clearing it breaks what was encrypted or signed with it. Confirm it by name to go ahead.", k),
+				"set_once":    k,
+				"description": d.Description,
+			})
+			return
+		}
 		changes[k] = v
+		secret[k] = declared && d.Secret
 	}
-	version, err := h.store.SaveSettings(c.Request.Context(), plugin, changes, req.Note, actor(c))
+	version, err := h.store.SaveSettingsWithSecrets(c.Request.Context(), plugin, changes, secret, req.Note, actor(c))
 	if err != nil {
 		fail(c, err)
 		return
@@ -148,4 +209,23 @@ func (h *Handlers) settingsHistory(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, hist)
+}
+
+// restoreSetting makes an earlier version of one key current again — a
+// secret included, whose sealed value is copied without being opened. It is
+// how a set-once value replaced by mistake is put back.
+func (h *Handlers) restoreSetting(c *gin.Context) {
+	var req struct {
+		Version int64 `json:"version"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Version <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "version required"})
+		return
+	}
+	version, err := h.store.RestoreSetting(c.Request.Context(), c.Param("plugin"), req.Version, actor(c))
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"version": version})
 }

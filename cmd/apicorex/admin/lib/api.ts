@@ -318,6 +318,7 @@ export interface SettingView {
   description?: string;
   enum?: string[];
   secret?: boolean;
+  set_once?: boolean;
   value: string;
   set: boolean;
   updated_at?: string;
@@ -339,6 +340,8 @@ export interface SettingChange {
   version: number;
   key: string;
   value: string | null;
+  secret: boolean;
+  cleared: boolean;
   note: string;
   saved_at: string;
   saved_by: string;
@@ -348,8 +351,17 @@ export function fetchSettings(): Promise<PluginSettings[]> {
   return adminJSON("GET", "/_core/admin/settings");
 }
 
-export function saveSettings(plugin: string, values: Record<string, string | null>, note: string): Promise<{ version: number }> {
-  return adminJSON("PUT", `/_core/admin/settings/${enc(plugin)}`, { values, note });
+export function saveSettings(
+  plugin: string,
+  values: Record<string, string | null>,
+  note: string,
+  confirm: string[] = [],
+): Promise<{ version: number }> {
+  return adminJSON("PUT", `/_core/admin/settings/${enc(plugin)}`, { values, note, confirm });
+}
+
+export function restoreSetting(plugin: string, version: number): Promise<{ version: number }> {
+  return adminJSON("POST", `/_core/admin/settings/${enc(plugin)}/restore`, { version });
 }
 
 export function fetchSettingsHistory(plugin: string): Promise<SettingChange[]> {
