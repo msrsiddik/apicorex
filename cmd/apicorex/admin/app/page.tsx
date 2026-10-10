@@ -8,6 +8,7 @@ import DatabasePanel from "@/components/DatabasePanel";
 import AuditPanel from "@/components/AuditPanel";
 import SettingsPanel from "@/components/SettingsPanel";
 import KeysPanel from "@/components/KeysPanel";
+import BackupsPanel from "@/components/BackupsPanel";
 import LoginForm from "@/components/LoginForm";
 import {
   checkSession,
@@ -39,6 +40,7 @@ const SECTION_PATHS: Record<SectionId, string> = {
   database: "/dashboard/database",
   settings: "/dashboard/settings",
   keys: "/dashboard/keys",
+  backups: "/dashboard/backups",
   audit: "/dashboard/audit",
 };
 
@@ -143,6 +145,8 @@ export default function Home() {
           <SettingsPanel />
         ) : section === "keys" ? (
           <KeysPanel />
+        ) : section === "backups" ? (
+          <BackupsPanel />
         ) : (
           <AuditPanel />
         )}

@@ -164,6 +164,8 @@ All via environment variables (secrets never hardcoded):
 | `CORE_MASTER_KEY` | empty | 32 random bytes, base64 (`openssl rand -base64 32`). Seals secrets in the config store; unset means the dashboard cannot save any |
 | `STORE_SNAPSHOT_INTERVAL` | `24h` | How often the store snapshots itself into `snapshots/` beside the file; `0` turns it off |
 | `STORE_SNAPSHOT_KEEP` | `7` | Snapshots kept |
+| `STORE_BACKUP_REMOTE` | empty | rclone `remote:path` snapshots are copied to (30 daily, 12 monthly kept there), e.g. `gdrive-crypt:core-store` |
+| `STORE_RCLONE_CONF_B64` | empty | The rclone config, base64 (`base64 -w0 rclone.conf`). Needed with `STORE_BACKUP_REMOTE` |
 | `SEED_DATABASE_URL` | empty | Sets the default plugin database connection once, on a store that has none; ignored afterwards |
 
 Per-plugin limits (rate, bulkhead, circuit breaker, timeouts, health-check
@@ -193,9 +195,14 @@ be read without it.
 
 Backups:
 
-- **Snapshots** are taken on a schedule into `snapshots/` next to the file.
-  They protect against a bad change or a corrupt file, not against losing the
-  volume.
+- **Snapshots** are taken on a schedule into `snapshots/` next to the file,
+  and on demand from the dashboard's *Store backups* screen, which lists and
+  downloads them. On the volume alone they protect against a bad change or a
+  corrupt file, not against losing the volume — so with
+  `STORE_BACKUP_REMOTE` and `STORE_RCLONE_CONF_B64` set, each is also copied
+  off the server through rclone (a crypt remote over Google Drive, say), and
+  the screen shows which copies got there. Keep `CORE_MASTER_KEY` and the
+  rclone config somewhere other than that remote.
 - **On demand**, from a shell: `docker compose exec core /app/apicorex store
   backup /data/manual.db`. The copy is consistent even while Core is running.
   Copy it off the server for a backup that survives losing the volume.

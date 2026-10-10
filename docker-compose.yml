@@ -59,6 +59,14 @@ services:
       # Daily snapshots into /data/snapshots, a week kept. 0 turns them off.
       STORE_SNAPSHOT_INTERVAL: ${STORE_SNAPSHOT_INTERVAL:-24h}
       STORE_SNAPSHOT_KEEP: ${STORE_SNAPSHOT_KEEP:-7}
+      # Off-site copies of the snapshots, through rclone — e.g. a crypt remote
+      # over Google Drive, "gdrive-crypt:core-store" — 30 daily and 12 monthly
+      # kept there. Both or neither: the remote, and the rclone config
+      # base64-encoded (base64 -w0 rclone.conf). Keep that config, and
+      # CORE_MASTER_KEY, somewhere other than the remote: a copy restores only
+      # with the key, and is read only with the config's crypt password.
+      STORE_BACKUP_REMOTE: ${STORE_BACKUP_REMOTE:-}
+      STORE_RCLONE_CONF_B64: ${STORE_RCLONE_CONF_B64:-}
       # Fills the dashboard's default database connection once, on a store
       # that has none. Ignored after that — the dashboard owns it. Leave empty
       # to set it by hand.

@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"errors"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -143,35 +142,6 @@ func TestBackupIsAWorkingCopy(t *testing.T) {
 	// the good copy with a later, possibly bad, one.
 	if err := s.Backup(ctx, dest); err == nil {
 		t.Fatal("backup overwrote an existing file")
-	}
-}
-
-func TestPruneKeepsNewest(t *testing.T) {
-	dir := t.TempDir()
-	names := []string{
-		"core-20261001T000000Z.db",
-		"core-20261003T000000Z.db",
-		"core-20261002T000000Z.db",
-		"unrelated.db",
-	}
-	for _, n := range names {
-		if err := os.WriteFile(filepath.Join(dir, n), nil, 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := pruneSnapshots(dir, 2); err != nil {
-		t.Fatal(err)
-	}
-	for n, want := range map[string]bool{
-		"core-20261001T000000Z.db": false,
-		"core-20261002T000000Z.db": true,
-		"core-20261003T000000Z.db": true,
-		"unrelated.db":             true, // not ours to delete
-	} {
-		_, err := os.Stat(filepath.Join(dir, n))
-		if got := err == nil; got != want {
-			t.Errorf("%s exists=%v, want %v", n, got, want)
-		}
 	}
 }
 

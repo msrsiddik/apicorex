@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/msrsiddik/apicorex/internal/snapshots"
 	"github.com/msrsiddik/apicorex/internal/store"
 )
 
@@ -98,6 +99,45 @@ func snapshotSettings() (dir string, interval time.Duration, keep int) {
 		}
 	}
 	return dir, interval, keep
+}
+
+// newSnapshots sets up the store's snapshots: on the schedule above, kept on
+// the store's volume, and copied off the server when STORE_BACKUP_REMOTE and
+// STORE_RCLONE_CONF_B64 are both set. Never fatal: a broken off-site setup is
+// logged and the snapshots stay on the server, which is what they did before.
+//
+// The rclone config comes from the environment rather than from the store it
+// backs up: restoring from Drive after losing the store is exactly when it is
+// needed, and it would be inside what was lost.
+func newSnapshots(st *store.Store) *snapshots.Manager {
+	dir, interval, keep := snapshotSettings()
+	var remote snapshots.Remote
+	target, conf := os.Getenv("STORE_BACKUP_REMOTE"), os.Getenv("STORE_RCLONE_CONF_B64")
+	switch {
+	case target != "" && conf != "":
+		path, err := snapshots.WriteConfig(conf, filepath.Join(os.TempDir(), "core-rclone"))
+		if err != nil {
+			log.Printf("[warn] STORE_RCLONE_CONF_B64: %v; store snapshots stay on this server only", err)
+		} else {
+			remote = &snapshots.Rclone{Target: target, Config: path}
+		}
+	case target != "" || conf != "":
+		log.Printf("[warn] off-site store snapshots need both STORE_BACKUP_REMOTE and STORE_RCLONE_CONF_B64; they stay on this server only")
+	}
+	m, err := snapshots.New(snapshots.Config{
+		Dir: dir, Interval: interval, Keep: keep,
+		RemoteDaily: 30, RemoteMonthly: 12,
+	}, st, remote)
+	if err != nil {
+		log.Printf("[warn] %v; store snapshots are off", err)
+		return nil
+	}
+	where := "this server only"
+	if remote != nil {
+		where = "this server and " + remote.String()
+	}
+	log.Printf("[snapshots] every %s into %s, kept on %s", interval, dir, where)
+	return m
 }
 
 // runStoreCommand handles `apicorex store <subcommand>`, for an operator at a
