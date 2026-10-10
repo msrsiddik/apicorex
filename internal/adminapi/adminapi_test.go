@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -33,11 +34,22 @@ func (f *fakeProber) Probe(_ context.Context, dsn string) (ProbeResult, error) {
 
 type fakeRegistry struct {
 	names []string
-	state map[string][2]any
+	state map[string][]any
 	// decl and settingsEnv stand in for a manifest's settings and what the
 	// plugin reported about its environment.
 	decl        map[string][]manifest.Setting
 	settingsEnv map[string][]string
+}
+
+func (f fakeRegistry) AuthByName(name string) (string, bool) {
+	st, ok := f.state[name]
+	if !ok {
+		return "", false
+	}
+	if len(st) > 2 {
+		return st[2].(string), true
+	}
+	return "shared", true
 }
 
 func (f fakeRegistry) SettingsStateByName(name string) (registry.SettingsState, bool) {
@@ -78,9 +90,9 @@ func newHarness(t *testing.T, writable, withKey bool, registered ...string) *har
 	t.Cleanup(func() { st.Close() })
 	p := &fakeProber{}
 	e := gin.New()
-	reg := fakeRegistry{names: registered, state: map[string][2]any{}, decl: testDecl, settingsEnv: map[string][]string{"schoolyze": {"PUBLIC_BASE_URL"}}}
+	reg := fakeRegistry{names: registered, state: map[string][]any{}, decl: testDecl, settingsEnv: map[string][]string{"schoolyze": {"PUBLIC_BASE_URL"}}}
 	for _, n := range registered {
-		reg.state[n] = [2]any{"core", int64(1)}
+		reg.state[n] = []any{"core", int64(1)}
 	}
 	New(st, reg, writable, p).Mount(e.Group("/_core/admin"))
 	return &harness{engine: e, store: st, prober: p}
@@ -354,5 +366,63 @@ func TestSettingsWritesNeedLogin(t *testing.T) {
 	h := newHarness(t, false, false, "schoolyze")
 	if code, _, _ := h.do(t, http.MethodPut, "/_core/admin/settings/schoolyze", map[string]any{"values": map[string]any{}}); code != http.StatusForbidden {
 		t.Fatalf("%d", code)
+	}
+}
+
+func TestKeysIssueListRevoke(t *testing.T) {
+	h := newHarness(t, true, false, "schoolyze")
+	code, out, body := h.do(t, http.MethodPost, "/_core/admin/keys/schoolyze", nil)
+	if code != http.StatusOK || !strings.HasPrefix(out["key"].(string), "akx_") {
+		t.Fatalf("issue: %d %s", code, body)
+	}
+	raw := out["key"].(string)
+	id := int64(out["issued"].(map[string]any)["id"].(float64))
+
+	code, _, body = h.do(t, http.MethodGet, "/_core/admin/keys", nil)
+	if code != http.StatusOK || strings.Contains(body, raw) {
+		t.Fatalf("the listing carried the key itself: %s", body)
+	}
+	var list struct {
+		AcceptShared bool `json:"accept_shared"`
+		Plugins      []struct {
+			Plugin string `json:"plugin"`
+			Auth   string `json:"auth"`
+			Keys   []any  `json:"keys"`
+		} `json:"plugins"`
+	}
+	json.Unmarshal([]byte(body), &list)
+	if !list.AcceptShared || len(list.Plugins) != 1 || len(list.Plugins[0].Keys) != 1 || list.Plugins[0].Auth != "shared" {
+		t.Fatalf("%s", body)
+	}
+
+	if code, _, _ := h.do(t, http.MethodDelete, fmt.Sprintf("/_core/admin/keys/schoolyze/%d", id), nil); code != http.StatusOK {
+		t.Fatalf("revoke: %d", code)
+	}
+	if _, ok, _ := h.store.LookupPluginKey(context.Background(), raw); ok {
+		t.Fatal("revoked through the API but still works")
+	}
+}
+
+func TestSharedKeyOffIsRefusedWhileAPluginUsesIt(t *testing.T) {
+	h := newHarness(t, true, false, "schoolyze") // registered on the shared key
+	code, out, _ := h.do(t, http.MethodPut, "/_core/admin/shared-key", map[string]any{"accept": false})
+	if code != http.StatusConflict || !strings.Contains(fmt.Sprint(out["still_on_shared"]), "schoolyze") {
+		t.Fatalf("%d %v", code, out)
+	}
+	if code, _, _ := h.do(t, http.MethodPut, "/_core/admin/shared-key", map[string]any{"accept": false, "force": true}); code != http.StatusOK {
+		t.Fatalf("forced: %d", code)
+	}
+	if on, _ := h.store.AcceptSharedKey(context.Background()); on {
+		t.Fatal("still accepted")
+	}
+}
+
+func TestKeyWritesNeedLogin(t *testing.T) {
+	h := newHarness(t, false, false, "schoolyze")
+	if code, _, _ := h.do(t, http.MethodPost, "/_core/admin/keys/schoolyze", nil); code != http.StatusForbidden {
+		t.Fatalf("issue without login: %d", code)
+	}
+	if code, _, _ := h.do(t, http.MethodPut, "/_core/admin/shared-key", map[string]any{"accept": false, "force": true}); code != http.StatusForbidden {
+		t.Fatalf("shared-key without login: %d", code)
 	}
 }

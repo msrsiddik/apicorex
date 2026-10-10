@@ -53,6 +53,10 @@ type PluginEntry struct {
 	// "built before settings", and the dashboard must tell those apart to say
 	// "restart to apply" rather than "this build cannot".
 	SettingsLoaded bool
+	// Auth is how the plugin authenticated when it registered: "own" for a
+	// key of its own, "shared" for the shared PLUGIN_API_KEY. The dashboard
+	// shows it so the shared key is turned off only once nobody needs it.
+	Auth string
 }
 
 // Registry is the in-memory store of registered plugins, keyed by plugin ID.
@@ -125,6 +129,26 @@ func (r *Registry) ReportDB(pluginID, source string, version int64) {
 		entry.DBSource = source
 		entry.DBVersion = version
 	}
+}
+
+// SetAuth records how a plugin authenticated at registration.
+func (r *Registry) SetAuth(pluginID, auth string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if entry, ok := r.plugins[pluginID]; ok {
+		entry.Auth = auth
+	}
+}
+
+// AuthByName returns how a registered plugin authenticated.
+func (r *Registry) AuthByName(name string) (string, bool) {
+	e, found := r.FindByName(name)
+	if !found {
+		return "", false
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return e.Auth, true
 }
 
 // ReportSettings records what a plugin said about its settings on a

@@ -356,6 +356,42 @@ export function fetchSettingsHistory(plugin: string): Promise<SettingChange[]> {
   return adminJSON("GET", `/_core/admin/settings/${enc(plugin)}/history`);
 }
 
+// ── API keys per plugin ─────────────────────────────────────────────────────
+
+export interface PluginKey {
+  id: number;
+  plugin: string;
+  hint: string;
+  created_at: string;
+  created_by: string;
+  last_used_at?: string;
+  revoked_at?: string;
+  revoked_by?: string;
+}
+
+export interface PluginKeysView {
+  plugin: string;
+  registered: boolean;
+  auth: "own" | "shared" | "";
+  keys: PluginKey[];
+}
+
+export function fetchKeys(): Promise<{ accept_shared: boolean; plugins: PluginKeysView[] }> {
+  return adminJSON("GET", "/_core/admin/keys");
+}
+
+export function issueKey(plugin: string): Promise<{ key: string; issued: PluginKey }> {
+  return adminJSON("POST", `/_core/admin/keys/${enc(plugin)}`);
+}
+
+export function revokeKey(plugin: string, id: number): Promise<void> {
+  return adminJSON("DELETE", `/_core/admin/keys/${enc(plugin)}/${id}`);
+}
+
+export function setSharedKey(accept: boolean, force = false): Promise<{ accept_shared: boolean }> {
+  return adminJSON("PUT", "/_core/admin/shared-key", { accept, force });
+}
+
 // ── Prometheus text-exposition parsing ──────────────────────────────────────
 // /metrics is plain-text (no JSON endpoint exists for it), so we parse just
 // the handful of metric families the dashboard cares about. Lines look like:

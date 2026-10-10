@@ -25,6 +25,8 @@ type Registry interface {
 	// SettingsStateByName is what a plugin last reported about its settings,
 	// and the settings its manifest declares.
 	SettingsStateByName(name string) (registry.SettingsState, bool)
+	// AuthByName is how a registered plugin authenticated: "own" or "shared".
+	AuthByName(name string) (string, bool)
 }
 
 // Handlers serves the admin config API.
@@ -52,6 +54,7 @@ func (h *Handlers) Mount(admin *gin.RouterGroup) {
 	admin.GET("/commands/:plugin", h.listCommands)
 	admin.GET("/settings", h.listSettings)
 	admin.GET("/settings/:plugin/history", h.settingsHistory)
+	admin.GET("/keys", h.listKeys)
 
 	w := admin.Group("", h.requireWritable)
 	w.PUT("/db-config/:plugin", h.save)
@@ -60,6 +63,9 @@ func (h *Handlers) Mount(admin *gin.RouterGroup) {
 	w.POST("/db-config/:plugin/test", h.test)
 	w.POST("/commands/:plugin", h.queueCommand)
 	w.PUT("/settings/:plugin", h.saveSettings)
+	w.POST("/keys/:plugin", h.issueKey)
+	w.DELETE("/keys/:plugin/:id", h.revokeKey)
+	w.PUT("/shared-key", h.setSharedKey)
 }
 
 func (h *Handlers) requireWritable(c *gin.Context) {

@@ -107,6 +107,23 @@ Save **both** the `plugin_id` and the `plugin_token`. The token is a signed cred
 
 ---
 
+### A key of its own
+
+The shared `PLUGIN_API_KEY` lets whoever holds it register under any name.
+An operator can instead issue each plugin a key of its own from the gateway
+dashboard (API keys); it arrives in your environment as `CORE_API_KEY`.
+Send it as `api_key` wherever the shared key went — register, the config
+fetches, maintenance — and prefer it to `PLUGIN_API_KEY` when both are set.
+
+With its own key a plugin can register only under its own name, fetch only
+its own config (the `plugin` field may be left out; naming another plugin is
+refused with `403`), and open a maintenance window only on itself. Once every
+plugin has one, the operator turns the shared key off for these calls. It
+still authenticates plugins to each other's `/internal/*` routes and Core to
+Identity; that is unchanged.
+
+---
+
 ## 4. Heartbeat (recommended) — `POST {CORE_URL}/_core/heartbeat`
 
 ```json
