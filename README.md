@@ -175,6 +175,12 @@ interval) can also be tuned globally via env vars: `RATE_PER_SEC`,
 `tenant_rate_burst` — caps one tenant's share of a plugin's overall budget)
 has no env-var form and can only be set via `CONFIG_FILE`.
 
+`REQUEST_TIMEOUT` (default `120s`) bounds how long a plugin may take to *start*
+answering — to send its response headers — counted from when the request body
+has been sent. A plugin that misses it gets the caller a `504`. Once headers
+arrive the clock stops, so downloads, server-sent events and slow uploads are
+not cut; WebSocket upgrades are exempt.
+
 See [docker-compose.example.yml](./docker-compose.example.yml) for every var
 with its default spelled out. `docker-compose.yml` itself reads each one as
 `${VAR:-default}`, so it runs unchanged with nothing set — export a var, or
