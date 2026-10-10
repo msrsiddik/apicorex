@@ -43,6 +43,16 @@ type PluginEntry struct {
 	// without a database, or built before plugins reported it.
 	DBSource  string
 	DBVersion int64
+	// SettingsVersion and SettingsFromEnv are what the plugin reported about
+	// its dashboard settings: the version it loaded at startup, and the keys
+	// its environment overrides. Zero and nil for a plugin that says nothing.
+	SettingsVersion int64
+	SettingsFromEnv []string
+	// SettingsLoaded is whether the plugin loads settings from Core at all.
+	// Without it a version of 0 could mean "loaded when nothing was set" or
+	// "built before settings", and the dashboard must tell those apart to say
+	// "restart to apply" rather than "this build cannot".
+	SettingsLoaded bool
 }
 
 // Registry is the in-memory store of registered plugins, keyed by plugin ID.
@@ -115,6 +125,44 @@ func (r *Registry) ReportDB(pluginID, source string, version int64) {
 		entry.DBSource = source
 		entry.DBVersion = version
 	}
+}
+
+// ReportSettings records what a plugin said about its settings on a
+// heartbeat.
+func (r *Registry) ReportSettings(pluginID string, loaded bool, version int64, fromEnv []string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if entry, ok := r.plugins[pluginID]; ok {
+		entry.SettingsLoaded = loaded
+		entry.SettingsVersion = version
+		entry.SettingsFromEnv = append([]string(nil), fromEnv...)
+	}
+}
+
+// SettingsStateByName returns what a registered plugin last reported about
+// its settings, and its manifest's declarations. ok is false when no plugin
+// of that name is registered.
+func (r *Registry) SettingsStateByName(name string) (SettingsState, bool) {
+	e, found := r.FindByName(name)
+	if !found {
+		return SettingsState{}, false
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return SettingsState{
+		Loaded:   e.SettingsLoaded,
+		Version:  e.SettingsVersion,
+		FromEnv:  append([]string(nil), e.SettingsFromEnv...),
+		Declared: e.Manifest.Settings,
+	}, true
+}
+
+// SettingsState is what the dashboard knows about a plugin's settings.
+type SettingsState struct {
+	Loaded   bool
+	Version  int64
+	FromEnv  []string
+	Declared []manifest.Setting
 }
 
 // DBStateByName returns what a registered plugin last reported about its

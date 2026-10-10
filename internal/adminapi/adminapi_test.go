@@ -13,6 +13,8 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/msrsiddik/apicorex/internal/manifest"
+	"github.com/msrsiddik/apicorex/internal/registry"
 	"github.com/msrsiddik/apicorex/internal/store"
 )
 
@@ -32,6 +34,17 @@ func (f *fakeProber) Probe(_ context.Context, dsn string) (ProbeResult, error) {
 type fakeRegistry struct {
 	names []string
 	state map[string][2]any
+	// decl and settingsEnv stand in for a manifest's settings and what the
+	// plugin reported about its environment.
+	decl        map[string][]manifest.Setting
+	settingsEnv map[string][]string
+}
+
+func (f fakeRegistry) SettingsStateByName(name string) (registry.SettingsState, bool) {
+	if _, ok := f.state[name]; !ok {
+		return registry.SettingsState{}, false
+	}
+	return registry.SettingsState{Loaded: true, FromEnv: f.settingsEnv[name], Declared: f.decl[name]}, true
 }
 
 func (f fakeRegistry) Names() []string { return f.names }
@@ -65,7 +78,7 @@ func newHarness(t *testing.T, writable, withKey bool, registered ...string) *har
 	t.Cleanup(func() { st.Close() })
 	p := &fakeProber{}
 	e := gin.New()
-	reg := fakeRegistry{names: registered, state: map[string][2]any{}}
+	reg := fakeRegistry{names: registered, state: map[string][2]any{}, decl: testDecl, settingsEnv: map[string][]string{"schoolyze": {"PUBLIC_BASE_URL"}}}
 	for _, n := range registered {
 		reg.state[n] = [2]any{"core", int64(1)}
 	}
@@ -261,5 +274,85 @@ func TestQueueAndListCommands(t *testing.T) {
 	json.Unmarshal(w.Body.Bytes(), &list)
 	if len(list) != 1 || list[0]["kind"] != "restart" {
 		t.Fatalf("list: %s", w.Body.String())
+	}
+}
+
+var testDecl = map[string][]manifest.Setting{
+	"schoolyze": {
+		{Key: "PDF_MAX_CONCURRENT", Type: manifest.SettingInt, Default: "3"},
+		{Key: "PUBLIC_BASE_URL", Type: manifest.SettingURL},
+		{Key: "PAYMENT_CRED_KEY", Type: manifest.SettingString, Secret: true},
+	},
+}
+
+func TestSettingsSaveValidatesAgainstTheDeclaration(t *testing.T) {
+	h := newHarness(t, true, false, "schoolyze")
+	put := func(values map[string]any) (int, map[string]any) {
+		code, out, _ := h.do(t, http.MethodPut, "/_core/admin/settings/schoolyze", map[string]any{"values": values})
+		return code, out
+	}
+	if code, out := put(map[string]any{"PDF_MAX_CONCURRENT": "lots"}); code != http.StatusBadRequest {
+		t.Errorf("bad int: %d %v", code, out)
+	}
+	if code, _ := put(map[string]any{"NOT_DECLARED": "x"}); code != http.StatusBadRequest {
+		t.Errorf("undeclared key: %d", code)
+	}
+	if code, out := put(map[string]any{"PAYMENT_CRED_KEY": "k"}); code != http.StatusBadRequest || !strings.Contains(out["error"].(string), "secret") {
+		t.Errorf("secret: %d %v", code, out)
+	}
+	if code, out := put(map[string]any{"PDF_MAX_CONCURRENT": "5", "PUBLIC_BASE_URL": "https://pay.example.com"}); code != http.StatusOK {
+		t.Fatalf("valid save: %d %v", code, out)
+	}
+	// "" clears, like null.
+	if code, _ := put(map[string]any{"PDF_MAX_CONCURRENT": ""}); code != http.StatusOK {
+		t.Fatalf("clear: %d", code)
+	}
+	got, _ := h.store.ListSettings(context.Background(), "schoolyze")
+	if _, still := got["PDF_MAX_CONCURRENT"]; still || got["PUBLIC_BASE_URL"].Value != "https://pay.example.com" {
+		t.Fatalf("%+v", got)
+	}
+}
+
+func TestSettingsNeedARegisteredPlugin(t *testing.T) {
+	// Without the manifest there is nothing to validate against.
+	h := newHarness(t, true, false)
+	code, _, _ := h.do(t, http.MethodPut, "/_core/admin/settings/schoolyze", map[string]any{"values": map[string]any{"X": "1"}})
+	if code != http.StatusConflict {
+		t.Fatalf("%d", code)
+	}
+}
+
+func TestSettingsListShowsSourceOfEachValue(t *testing.T) {
+	h := newHarness(t, true, false, "schoolyze")
+	h.do(t, http.MethodPut, "/_core/admin/settings/schoolyze", map[string]any{"values": map[string]any{"PDF_MAX_CONCURRENT": "5"}})
+	code, _, body := h.do(t, http.MethodGet, "/_core/admin/settings", nil)
+	if code != http.StatusOK {
+		t.Fatal(code)
+	}
+	var list []map[string]any
+	json.Unmarshal([]byte(body), &list)
+	if len(list) != 1 || list[0]["plugin"] != "schoolyze" {
+		t.Fatalf("%s", body)
+	}
+	byKey := map[string]map[string]any{}
+	for _, s := range list[0]["settings"].([]any) {
+		m := s.(map[string]any)
+		byKey[m["key"].(string)] = m
+	}
+	if byKey["PDF_MAX_CONCURRENT"]["set"] != true || byKey["PDF_MAX_CONCURRENT"]["value"] != "5" {
+		t.Errorf("set value: %v", byKey["PDF_MAX_CONCURRENT"])
+	}
+	if byKey["PUBLIC_BASE_URL"]["from_env"] != true || byKey["PUBLIC_BASE_URL"]["set"] != false {
+		t.Errorf("env override: %v", byKey["PUBLIC_BASE_URL"])
+	}
+	if list[0]["version"].(float64) == 0 {
+		t.Error("version not reported")
+	}
+}
+
+func TestSettingsWritesNeedLogin(t *testing.T) {
+	h := newHarness(t, false, false, "schoolyze")
+	if code, _, _ := h.do(t, http.MethodPut, "/_core/admin/settings/schoolyze", map[string]any{"values": map[string]any{}}); code != http.StatusForbidden {
+		t.Fatalf("%d", code)
 	}
 }

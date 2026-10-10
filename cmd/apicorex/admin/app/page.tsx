@@ -6,6 +6,7 @@ import OverviewPanel from "@/components/OverviewPanel";
 import PluginsPanel from "@/components/PluginsPanel";
 import DatabasePanel from "@/components/DatabasePanel";
 import AuditPanel from "@/components/AuditPanel";
+import SettingsPanel from "@/components/SettingsPanel";
 import LoginForm from "@/components/LoginForm";
 import {
   checkSession,
@@ -35,6 +36,7 @@ const SECTION_PATHS: Record<SectionId, string> = {
   overview: "/dashboard",
   plugins: "/plugin",
   database: "/dashboard/database",
+  settings: "/dashboard/settings",
   audit: "/dashboard/audit",
 };
 
@@ -135,6 +137,8 @@ export default function Home() {
           <PluginsPanel plugins={plugins} loading={loading} error={error} onRefresh={load} />
         ) : section === "database" ? (
           <DatabasePanel />
+        ) : section === "settings" ? (
+          <SettingsPanel />
         ) : (
           <AuditPanel />
         )}

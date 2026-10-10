@@ -95,6 +95,7 @@ func (h *Handlers) Mount(engine *gin.Engine) {
 	g.POST("/heartbeat", h.heartbeat)
 	g.POST("/deregister", h.deregister)
 	g.POST("/config/db", h.dbConfig)
+	g.POST("/config/settings", h.settingsConfig)
 	g.POST("/commands/:id/result", h.commandResult)
 	g.GET("/plugins/:name/manifest", h.pluginManifest)
 	// Maintenance windows. Authenticated with the same shared plugin key as
@@ -377,6 +378,11 @@ func (h *Handlers) heartbeat(c *gin.Context) {
 		PluginToken string `json:"plugin_token"`
 		DBSource    string `json:"db_source"`
 		DBVersion   int64  `json:"db_version"`
+		// Settings the plugin loaded at startup, and which keys its
+		// environment overrides. Absent from a plugin built before settings.
+		SettingsLoaded  bool     `json:"settings_loaded"`
+		SettingsVersion int64    `json:"settings_version"`
+		SettingsFromEnv []string `json:"settings_from_env"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
@@ -398,6 +404,7 @@ func (h *Handlers) heartbeat(c *gin.Context) {
 	}
 	name := entry.Info.PluginName
 	h.reg.ReportDB(req.PluginID, req.DBSource, req.DBVersion)
+	h.reg.ReportSettings(req.PluginID, req.SettingsLoaded, req.SettingsVersion, req.SettingsFromEnv)
 
 	ctx := c.Request.Context()
 	// A store error must not fail the heartbeat: the plugin would read it as
@@ -407,6 +414,11 @@ func (h *Handlers) heartbeat(c *gin.Context) {
 		resp["config_version"] = eff.Version
 	} else {
 		log.Printf("[controlplane] heartbeat %s: config version: %v", name, err)
+	}
+	if v, err := h.store.SettingsVersion(ctx, name); err == nil {
+		resp["settings_version"] = v
+	} else {
+		log.Printf("[controlplane] heartbeat %s: settings version: %v", name, err)
 	}
 	if cmd, err := h.store.TakeCommand(ctx, name); err != nil {
 		log.Printf("[controlplane] heartbeat %s: command: %v", name, err)
@@ -479,6 +491,60 @@ func (h *Handlers) dbConfig(c *gin.Context) {
 		"conn_max_idle_s":     int(eff.ConnMaxIdleTime.Seconds()),
 		"version":             eff.Version,
 	})
+}
+
+// settingsConfig hands a plugin the settings set for it on the dashboard,
+// with their version. Called before the plugin registers, like dbConfig, and
+// authenticated the same way. 200 with an empty map when nothing is set: the
+// plugin then runs on its environment and declared defaults, which is the
+// normal state for a plugin nobody has configured here.
+//
+// Only values are sent, not the declarations: the plugin made those and
+// knows them, and applying its own precedence (environment first) is its
+// job, not Core's.
+func (h *Handlers) settingsConfig(c *gin.Context) {
+	var req struct {
+		APIKey string `json:"api_key"`
+		Plugin string `json:"plugin"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		return
+	}
+	if h.apiKey != "" && subtle.ConstantTimeCompare([]byte(req.APIKey), []byte(h.apiKey)) != 1 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid api key"})
+		return
+	}
+	if len(h.allowlist) > 0 && !h.allowlist[req.Plugin] {
+		c.JSON(http.StatusForbidden, gin.H{"error": fmt.Sprintf("plugin %q not in allowlist", req.Plugin)})
+		return
+	}
+	if req.Plugin == store.DefaultPlugin || store.ValidatePluginName(req.Plugin) != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid plugin name"})
+		return
+	}
+	if h.store == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "config store unavailable"})
+		return
+	}
+	ctx := c.Request.Context()
+	set, err := h.store.ListSettings(ctx, req.Plugin)
+	if err != nil {
+		log.Printf("[controlplane] settings for %s: %v", req.Plugin, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "config store error"})
+		return
+	}
+	version, err := h.store.SettingsVersion(ctx, req.Plugin)
+	if err != nil {
+		log.Printf("[controlplane] settings version for %s: %v", req.Plugin, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "config store error"})
+		return
+	}
+	values := make(map[string]string, len(set))
+	for k, v := range set {
+		values[k] = v.Value
+	}
+	c.JSON(http.StatusOK, gin.H{"values": values, "version": version})
 }
 
 // commandResult records how a delivered command went. A restart reports
