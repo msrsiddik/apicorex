@@ -63,6 +63,7 @@ func (h *Handlers) Mount(admin *gin.RouterGroup) {
 	w.POST("/db-config/:plugin/test", h.test)
 	w.POST("/commands/:plugin", h.queueCommand)
 	w.PUT("/settings/:plugin", h.saveSettings)
+	w.POST("/settings/:plugin/restore", h.restoreSetting)
 	w.POST("/keys/:plugin", h.issueKey)
 	w.DELETE("/keys/:plugin/:id", h.revokeKey)
 	w.PUT("/shared-key", h.setSharedKey)

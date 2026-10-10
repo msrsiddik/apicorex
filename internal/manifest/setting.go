@@ -21,9 +21,15 @@ type Setting struct {
 	Description string `json:"description,omitempty"`
 	// Enum is the allowed values when Type is "enum".
 	Enum []string `json:"enum,omitempty"`
-	// Secret settings are held back from the dashboard until secrets are
-	// sealed per plugin; they stay in the environment until then.
+	// Secret settings are sealed in Core's store, never shown again once
+	// saved, and handed only to the plugin itself when it presents its own
+	// key.
 	Secret bool `json:"secret,omitempty"`
+	// SetOnce marks a value that data depends on — an encryption key, a
+	// signing key. Replacing or clearing one once it is set needs an explicit
+	// confirmation, since what was encrypted or signed with the old value
+	// stops working.
+	SetOnce bool `json:"set_once,omitempty"`
 }
 
 // Setting types.
@@ -41,7 +47,10 @@ var settingKeyRE = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,63}$`)
 
 // maxSettingLen bounds a value. Settings are configuration, not documents;
 // anything longer is a mistake or something that belongs elsewhere.
-const maxSettingLen = 4096
+const (
+	maxSettingLen = 4096
+	maxSecretLen  = 16384
+)
 
 // ValidSettingKey reports whether k is a key a plugin may declare: an
 // environment-variable name.
@@ -53,8 +62,14 @@ func (s Setting) Validate(v string) error {
 	if v == "" {
 		return nil
 	}
-	if len(v) > maxSettingLen {
-		return fmt.Errorf("%s: longer than %d characters", s.Key, maxSettingLen)
+	limit := maxSettingLen
+	if s.Secret {
+		// A secret can be a whole config file, base64 — rclone's, with its
+		// Drive token and crypt password, runs to a few kilobytes.
+		limit = maxSecretLen
+	}
+	if len(v) > limit {
+		return fmt.Errorf("%s: longer than %d characters", s.Key, limit)
 	}
 	switch s.Type {
 	case SettingString, "":

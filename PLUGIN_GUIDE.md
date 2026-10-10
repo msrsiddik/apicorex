@@ -228,9 +228,14 @@ deployment in the gateway dashboard. Declare each one in the manifest:
 `key` is the environment variable you already read. `type` is one of
 `string`, `int`, `bool` (`true`/`false`), `duration` (Go syntax: `30s`,
 `5m`), `time` (`HH:MM`), `url` (absolute), or `enum`. The dashboard builds
-its form from this and refuses values that do not fit. Declare a secret with
-`"secret": true`; the dashboard shows it but does not take it — secrets stay
-in your environment for now.
+its form from this and refuses values that do not fit.
+
+Declare a secret with `"secret": true`. Core seals it, never shows it again
+once saved, and sends it **only when you authenticate with your own key**
+(`CORE_API_KEY`); with the shared key the response leaves secrets out and
+says how many in `secrets_withheld`. Add `"set_once": true` to a value your
+data depends on — an encryption or signing key — and the dashboard asks for
+an explicit confirmation before replacing or clearing it once set.
 
 At startup, before you use any of them, ask Core for what is set:
 

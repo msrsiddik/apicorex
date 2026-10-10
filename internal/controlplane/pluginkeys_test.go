@@ -122,3 +122,54 @@ func TestRevokedKeyIsRefused(t *testing.T) {
 		t.Fatalf("revoked key: %d %v", code, out)
 	}
 }
+
+func TestSecretsOnlyToTheirOwnPlugin(t *testing.T) {
+	h := newCPHarness(t, nil, true)
+	ctx := context.Background()
+	key := h.issue("schoolyze")
+	v := "payment-secret"
+	plain := "5"
+	if _, err := h.store.SaveSettingsWithSecrets(ctx, "schoolyze",
+		map[string]*string{"PAYMENT_CRED_KEY": &v, "PDF_MAX_CONCURRENT": &plain},
+		map[string]bool{"PAYMENT_CRED_KEY": true}, "", "dashboard"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The shared key gets ordinary settings and is told secrets were withheld.
+	_, out := h.post("/_core/config/settings", map[string]string{"api_key": "plugin-key", "plugin": "schoolyze"})
+	vals := out["values"].(map[string]any)
+	if _, has := vals["PAYMENT_CRED_KEY"]; has || vals["PDF_MAX_CONCURRENT"] != "5" || out["secrets_withheld"].(float64) != 1 {
+		t.Fatalf("shared key: %v", out)
+	}
+
+	// The plugin's own key gets the secret, and that is audited.
+	_, out = h.post("/_core/config/settings", map[string]string{"api_key": key})
+	if out["values"].(map[string]any)["PAYMENT_CRED_KEY"] != "payment-secret" {
+		t.Fatalf("own key: %v", out)
+	}
+	audit, _ := h.store.ListAudit(ctx, 1, 0)
+	if audit[0].Action != "settings.fetch_secrets" || strings.Contains(audit[0].Detail, "payment-secret") {
+		t.Fatalf("audit: %+v", audit[0])
+	}
+
+	// Another plugin's own key cannot ask for schoolyze's.
+	other := h.issue("accounting")
+	if code, _ := h.post("/_core/config/settings", map[string]string{"api_key": other, "plugin": "schoolyze"}); code != http.StatusForbidden {
+		t.Fatalf("accounting's key read schoolyze's settings: %d", code)
+	}
+}
+
+func TestRegisterRecordsDeclarations(t *testing.T) {
+	h := newCPHarness(t, nil, true)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"name":"schoolyze","version":"1","routes":[],"settings":[{"key":"PORTAL_TOKEN_KEY","secret":true,"set_once":true}]}`)
+	}))
+	defer srv.Close()
+	if code, out := h.post("/_core/register", map[string]string{"base_url": srv.URL, "api_key": "plugin-key"}); code != http.StatusOK {
+		t.Fatalf("%d %v", code, out)
+	}
+	raw, _, ok, err := h.store.Declarations(context.Background(), "schoolyze")
+	if err != nil || !ok || !strings.Contains(string(raw), "PORTAL_TOKEN_KEY") || !strings.Contains(string(raw), `"set_once":true`) {
+		t.Fatalf("declarations not kept: %s %v %v", raw, ok, err)
+	}
+}

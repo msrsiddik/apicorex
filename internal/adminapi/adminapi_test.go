@@ -293,7 +293,8 @@ var testDecl = map[string][]manifest.Setting{
 	"schoolyze": {
 		{Key: "PDF_MAX_CONCURRENT", Type: manifest.SettingInt, Default: "3"},
 		{Key: "PUBLIC_BASE_URL", Type: manifest.SettingURL},
-		{Key: "PAYMENT_CRED_KEY", Type: manifest.SettingString, Secret: true},
+		{Key: "PAYMENT_CRED_KEY", Type: manifest.SettingString, Secret: true, SetOnce: true},
+		{Key: "PUSH_VAPID_PRIVATE", Type: manifest.SettingString, Secret: true},
 	},
 }
 
@@ -309,8 +310,10 @@ func TestSettingsSaveValidatesAgainstTheDeclaration(t *testing.T) {
 	if code, _ := put(map[string]any{"NOT_DECLARED": "x"}); code != http.StatusBadRequest {
 		t.Errorf("undeclared key: %d", code)
 	}
-	if code, out := put(map[string]any{"PAYMENT_CRED_KEY": "k"}); code != http.StatusBadRequest || !strings.Contains(out["error"].(string), "secret") {
-		t.Errorf("secret: %d %v", code, out)
+	// No master key in this harness: a secret cannot be sealed, so it is
+	// refused rather than stored in the clear.
+	if code, out := put(map[string]any{"PAYMENT_CRED_KEY": "k"}); code != http.StatusConflict || !strings.Contains(out["error"].(string), "CORE_MASTER_KEY") {
+		t.Errorf("secret without a master key: %d %v", code, out)
 	}
 	if code, out := put(map[string]any{"PDF_MAX_CONCURRENT": "5", "PUBLIC_BASE_URL": "https://pay.example.com"}); code != http.StatusOK {
 		t.Fatalf("valid save: %d %v", code, out)
@@ -424,5 +427,80 @@ func TestKeyWritesNeedLogin(t *testing.T) {
 	}
 	if code, _, _ := h.do(t, http.MethodPut, "/_core/admin/shared-key", map[string]any{"accept": false, "force": true}); code != http.StatusForbidden {
 		t.Fatalf("shared-key without login: %d", code)
+	}
+}
+
+func TestSecretSettingsThroughTheAPI(t *testing.T) {
+	h := newHarness(t, true, true, "schoolyze")
+	put := func(body map[string]any) (int, map[string]any, string) {
+		return h.do(t, http.MethodPut, "/_core/admin/settings/schoolyze", body)
+	}
+	if code, out, _ := put(map[string]any{"values": map[string]any{"PAYMENT_CRED_KEY": "first-key"}}); code != http.StatusOK {
+		t.Fatalf("first set of a set-once secret needs no confirmation: %d %v", code, out)
+	}
+
+	// The listing never carries it.
+	_, _, body := h.do(t, http.MethodGet, "/_core/admin/settings", nil)
+	if strings.Contains(body, "first-key") {
+		t.Fatalf("secret in the listing: %s", body)
+	}
+
+	// Replacing it needs its name confirmed.
+	code, out, _ := put(map[string]any{"values": map[string]any{"PAYMENT_CRED_KEY": "second-key"}})
+	if code != http.StatusConflict || out["set_once"] != "PAYMENT_CRED_KEY" {
+		t.Fatalf("replaced a set-once secret unconfirmed: %d %v", code, out)
+	}
+	if code, out, _ := put(map[string]any{"values": map[string]any{"PAYMENT_CRED_KEY": nil}}); code != http.StatusConflict {
+		t.Fatalf("cleared a set-once secret unconfirmed: %d %v", code, out)
+	}
+	if code, out, _ := put(map[string]any{"values": map[string]any{"PAYMENT_CRED_KEY": "second-key"}, "confirm": []string{"PAYMENT_CRED_KEY"}}); code != http.StatusOK {
+		t.Fatalf("confirmed replace: %d %v", code, out)
+	}
+	// An ordinary secret replaces without ceremony.
+	put(map[string]any{"values": map[string]any{"PUSH_VAPID_PRIVATE": "p1"}})
+	if code, out, _ := put(map[string]any{"values": map[string]any{"PUSH_VAPID_PRIVATE": "p2"}}); code != http.StatusOK {
+		t.Fatalf("ordinary secret: %d %v", code, out)
+	}
+
+	// History shows the changes, never the values, and restores the first.
+	_, _, hbody := h.do(t, http.MethodGet, "/_core/admin/settings/schoolyze/history", nil)
+	if strings.Contains(hbody, "first-key") || strings.Contains(hbody, "second-key") {
+		t.Fatalf("secret in history: %s", hbody)
+	}
+	var hist []map[string]any
+	json.Unmarshal([]byte(hbody), &hist)
+	var first float64
+	for _, c := range hist {
+		if c["key"] == "PAYMENT_CRED_KEY" {
+			first = c["version"].(float64) // oldest last; keep overwriting
+		}
+	}
+	if code, out, _ := h.do(t, http.MethodPost, "/_core/admin/settings/schoolyze/restore", map[string]any{"version": first}); code != http.StatusOK {
+		t.Fatalf("restore: %d %v", code, out)
+	}
+	got, _, _ := h.store.SettingsForPlugin(context.Background(), "schoolyze", true)
+	if got["PAYMENT_CRED_KEY"] != "first-key" {
+		t.Fatalf("restored %q", got["PAYMENT_CRED_KEY"])
+	}
+}
+
+func TestSettingsOfAPluginThatIsDown(t *testing.T) {
+	// A plugin that will not start without a setting, or crash-loops on a bad
+	// one, is not registered — and is exactly when the setting needs fixing.
+	h := newHarness(t, true, true) // nothing registered
+	decl, _ := json.Marshal(testDecl["schoolyze"])
+	if err := h.store.SaveDeclarations(context.Background(), "schoolyze", decl); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ := h.do(t, http.MethodPut, "/_core/admin/settings/schoolyze", map[string]any{"values": map[string]any{"PDF_MAX_CONCURRENT": "4", "PAYMENT_CRED_KEY": "k"}})
+	if code != http.StatusOK {
+		t.Fatalf("save for a down plugin: %d %v", code, out)
+	}
+	if code, out, _ := h.do(t, http.MethodPut, "/_core/admin/settings/schoolyze", map[string]any{"values": map[string]any{"PDF_MAX_CONCURRENT": "many"}}); code != http.StatusBadRequest {
+		t.Fatalf("still validated against the recorded declaration: %d %v", code, out)
+	}
+	_, _, body := h.do(t, http.MethodGet, "/_core/admin/settings", nil)
+	if !strings.Contains(body, `"plugin":"schoolyze"`) || !strings.Contains(body, `"registered":false`) {
+		t.Fatalf("a down plugin missing from the listing: %s", body)
 	}
 }
