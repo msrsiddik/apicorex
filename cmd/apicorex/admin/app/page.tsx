@@ -5,6 +5,7 @@ import Sidebar, { type SectionId } from "@/components/Sidebar";
 import OverviewPanel from "@/components/OverviewPanel";
 import PluginsPanel from "@/components/PluginsPanel";
 import DatabasePanel from "@/components/DatabasePanel";
+import ProtectionPanel from "@/components/ProtectionPanel";
 import AuditPanel from "@/components/AuditPanel";
 import SettingsPanel from "@/components/SettingsPanel";
 import KeysPanel from "@/components/KeysPanel";
@@ -38,6 +39,7 @@ const SECTION_PATHS: Record<SectionId, string> = {
   overview: "/dashboard",
   plugins: "/plugin",
   database: "/dashboard/database",
+  protection: "/dashboard/protection",
   settings: "/dashboard/settings",
   keys: "/dashboard/keys",
   backups: "/dashboard/backups",
@@ -141,6 +143,8 @@ export default function Home() {
           <PluginsPanel plugins={plugins} loading={loading} error={error} onRefresh={load} />
         ) : section === "database" ? (
           <DatabasePanel />
+        ) : section === "protection" ? (
+          <ProtectionPanel />
         ) : section === "settings" ? (
           <SettingsPanel />
         ) : section === "keys" ? (

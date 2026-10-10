@@ -129,10 +129,11 @@ func (h *Handlers) listProtection(c *gin.Context) {
 		plugins = append(plugins, v)
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"config":  limitsViewOf(h.protBase),
-		"rows":    rows,
-		"default": def,
-		"plugins": plugins,
+		"writable": h.writable,
+		"config":   limitsViewOf(h.protBase),
+		"rows":     rows,
+		"default":  def,
+		"plugins":  plugins,
 	})
 }
 

@@ -76,6 +76,9 @@ func TestProtectionSaveAppliesAndLists(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("list: %d %s", code, body)
 	}
+	if out["writable"] != true {
+		t.Errorf("writable: %v", out["writable"])
+	}
 	plugins := out["plugins"].([]any)
 	if len(plugins) != 1 {
 		t.Fatalf("plugins: %v", plugins)
