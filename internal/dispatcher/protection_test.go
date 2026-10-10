@@ -210,3 +210,138 @@ func TestPluginWithoutOverrideKeepsDefaults(t *testing.T) {
 		t.Errorf("after removal %d, want the bulkhead's own default", got)
 	}
 }
+
+// switchable is a LimitsSource a test changes between refreshes, as a save in
+// the dashboard changes what the store resolves.
+type switchable struct {
+	mu      sync.Mutex
+	limits  config.Limits
+	ownRate bool
+}
+
+func (s *switchable) set(l config.Limits) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.limits = l
+}
+
+func (s *switchable) source(string) (config.Limits, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.limits, s.ownRate
+}
+
+func withSource(s *stack, l config.Limits) *switchable {
+	src := &switchable{limits: l}
+	s.d.SetLimitsSource(src.source)
+	s.d.RefreshLimits("slow")
+	return src
+}
+
+func TestRefreshRaisesTheBulkheadWithoutDroppingHeldSlots(t *testing.T) {
+	release := make(chan struct{})
+	var entered sync.WaitGroup
+	entered.Add(1)
+	backend := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/slow/hold" {
+			entered.Done()
+			<-release
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	s := newStack(t, backend, config.Limits{})
+	limits := config.Defaults().Default
+	limits.BulkheadMax = 1
+	src := withSource(s, limits)
+
+	done := make(chan int, 1)
+	go func() { done <- s.get("/slow/hold").Code }()
+	entered.Wait()
+	if code := s.get("/slow/other").Code; code != http.StatusServiceUnavailable {
+		t.Fatalf("bulkhead 1, one held: %d, want 503", code)
+	}
+	limits.BulkheadMax = 2
+	src.set(limits)
+	s.d.RefreshLimits("slow")
+	if code := s.get("/slow/other").Code; code != http.StatusOK {
+		t.Fatalf("after raising to 2: %d, want the request through", code)
+	}
+	if got := s.d.ProtectionStatus("slow-1").BulkheadActive; got != 1 {
+		t.Errorf("the held request lost its slot: %d active", got)
+	}
+	close(release)
+	<-done
+}
+
+func TestRefreshChangesTheTimeoutForTheNextRequest(t *testing.T) {
+	backend := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-time.After(300 * time.Millisecond):
+		case <-r.Context().Done():
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	s := newStack(t, backend, config.Limits{})
+	limits := config.Defaults().Default
+	src := withSource(s, limits)
+	if code := s.get("/slow/a").Code; code != http.StatusOK {
+		t.Fatalf("under the 120s default: %d", code)
+	}
+	limits.RequestTimeout = 100 * time.Millisecond
+	src.set(limits)
+	s.d.RefreshLimits("slow")
+	if code := s.get("/slow/a").Code; code != http.StatusGatewayTimeout {
+		t.Fatalf("after lowering to 100ms: %d, want 504", code)
+	}
+}
+
+func TestRefreshKeepsAnUnchangedRateLimiter(t *testing.T) {
+	backend := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	s := newStack(t, backend, config.Limits{})
+	limits := config.Defaults().Default
+	limits.RatePerSec, limits.RateBurst = 0.001, 1
+	src := withSource(s, limits)
+	s.get("/slow/a")
+	if code := s.get("/slow/a").Code; code != http.StatusTooManyRequests {
+		t.Fatalf("burst 1 spent: %d, want 429", code)
+	}
+	// Saving an unrelated field must not refill the bucket.
+	limits.BulkheadMax = 7
+	src.set(limits)
+	s.d.RefreshLimits("slow")
+	if code := s.get("/slow/a").Code; code != http.StatusTooManyRequests {
+		t.Fatalf("after a bulkhead change: %d, want still 429", code)
+	}
+	limits.RateBurst = 5
+	src.set(limits)
+	s.d.RefreshLimits("slow")
+	if code := s.get("/slow/a").Code; code != http.StatusOK {
+		t.Fatalf("after raising the burst: %d, want the request through", code)
+	}
+}
+
+func TestPublicPluginRateScaling(t *testing.T) {
+	d := New(registry.New(), protection.NewCircuitBreaker(5, time.Second), protection.NewBulkhead(7), config.Defaults())
+	limits := config.Limits{RatePerSec: 100, RateBurst: 200, TenantRatePerSec: 30, BulkheadMax: 3, CBThreshold: 2, CBResetTimeout: time.Second}
+	src := &switchable{limits: limits}
+	d.SetLimitsSource(src.source)
+	d.AddRoutes("p-1", "pub", "public", []manifest.Route{{Method: "GET", Path: "/pub"}})
+
+	got, ok := d.RunningLimits("pub")
+	if !ok || got.RatePerSec != 10 || got.RateBurst != 20 || got.TenantRatePerSec != 3 {
+		t.Errorf("inherited rate on a public plugin, want a tenth: %+v", got)
+	}
+	// A tenant sub-limit given no burst still lets a request through.
+	if got.TenantRateBurst != 1 {
+		t.Errorf("tenant burst %g, want raised to 1", got.TenantRateBurst)
+	}
+	src.ownRate = true
+	d.RefreshLimits("pub")
+	if got, _ := d.RunningLimits("pub"); got.RatePerSec != 100 || got.RateBurst != 200 {
+		t.Errorf("a public plugin's own rate is not scaled: %+v", got)
+	}
+	d.RemoveRoutes("p-1")
+	if _, ok := d.RunningLimits("pub"); ok {
+		t.Error("still running after removal")
+	}
+}

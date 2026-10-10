@@ -99,10 +99,11 @@ services:
       # OTLP endpoint (e.g. Jaeger/Tempo). Empty = tracing is a no-op.
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       # Path to a YAML file of per-plugin protection-limit overrides (see
-      # config.example.yaml). Empty = use the env-var defaults below.
+      # config.example.yaml), copied into the store once per plugin. Empty =
+      # use the env-var defaults below.
       CONFIG_FILE: ${CONFIG_FILE:-}
       # Global defaults for rate limiting, bulkheading, and the circuit
-      # breaker/timeout — overridden per-plugin by CONFIG_FILE if set.
+      # breaker/timeout — for every field the dashboard does not set.
       RATE_PER_SEC: ${RATE_PER_SEC:-1000}
       BULKHEAD_MAX: ${BULKHEAD_MAX:-100}
       CB_THRESHOLD: ${CB_THRESHOLD:-5}

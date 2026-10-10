@@ -159,7 +159,7 @@ All via environment variables (secrets never hardcoded):
 | `APICOREX_SECRET` | empty | Login key for the embedded gateway dashboard (`/dashboard`) and `/docs`; unset disables the login form (dev only — open access) |
 | `CORS_ALLOWED_ORIGINS` | empty | Comma-separated browser origins allowed to call Core; empty = any origin (dev only) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | empty | Enables OpenTelemetry tracing (e.g. Jaeger) |
-| `CONFIG_FILE` | empty | YAML for per-plugin rate/limit overrides — see [config.example.yaml](./config.example.yaml) |
+| `CONFIG_FILE` | empty | YAML for per-plugin rate/limit overrides — see [config.example.yaml](./config.example.yaml). Copied into the store once per plugin; after that the dashboard decides |
 | `STORE_PATH` | `data/core.db` (`/data/core.db` in the image) | The config store's SQLite file |
 | `CORE_MASTER_KEY` | empty | 32 random bytes, base64 (`openssl rand -base64 32`). Seals secrets in the config store; unset means the dashboard cannot save any |
 | `STORE_SNAPSHOT_INTERVAL` | `24h` | How often the store snapshots itself into `snapshots/` beside the file; `0` turns it off |
@@ -168,12 +168,21 @@ All via environment variables (secrets never hardcoded):
 | `STORE_RCLONE_CONF_B64` | empty | The rclone config, base64 (`base64 -w0 rclone.conf`). Needed with `STORE_BACKUP_REMOTE` |
 | `SEED_DATABASE_URL` | empty | Sets the default plugin database connection once, on a store that has none; ignored afterwards |
 
-Per-plugin limits (rate, bulkhead, circuit breaker, timeouts, health-check
-interval) can also be tuned globally via env vars: `RATE_PER_SEC`,
-`BULKHEAD_MAX`, `CB_THRESHOLD`, `CB_RESET_TIMEOUT`, `REQUEST_TIMEOUT`,
-`HEALTH_INTERVAL`. The per-tenant rate sub-limit (`tenant_rate_per_sec`,
-`tenant_rate_burst` — caps one tenant's share of a plugin's overall budget)
-has no env-var form and can only be set via `CONFIG_FILE`.
+Protection limits (rate, bulkhead, circuit breaker, request timeout) are
+managed per plugin from the dashboard and kept in the config store. Each field
+resolves on its own: the plugin's own value, then the dashboard's default for
+every plugin, then Core's environment — `RATE_PER_SEC`, `BULKHEAD_MAX`,
+`CB_THRESHOLD`, `CB_RESET_TIMEOUT`, `REQUEST_TIMEOUT` — and `CONFIG_FILE`'s
+`default:`. So an env var still decides any field nobody has set in the
+dashboard. A save applies to the next request, with no restart; requests
+already in flight keep their bulkhead slot.
+
+`CONFIG_FILE`'s per-plugin entries are copied into the store at startup for a
+plugin that has never had limits there. Once a plugin has, the file no longer
+decides it, and Core logs a warning when the two differ. The per-tenant rate
+sub-limit (`tenant_rate_per_sec`, `tenant_rate_burst` — caps one tenant's share
+of a plugin's overall budget) has no env-var form. `HEALTH_INTERVAL` is set by
+env only.
 
 `REQUEST_TIMEOUT` (default `120s`) bounds how long a plugin may take to *start*
 answering — to send its response headers — counted from when the request body
