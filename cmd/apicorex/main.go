@@ -54,6 +54,7 @@ func main() {
 	st := openStore(ctx0)
 	defer st.Close()
 	seedDefaultDBConfig(ctx0, st)
+	seedProtectionLimits(ctx0, st, cfg)
 
 	reg := registry.New()
 	cb := protection.NewCircuitBreaker(cfg.Default.CBThreshold, cfg.Default.CBResetTimeout)
@@ -61,6 +62,7 @@ func main() {
 
 	injector := openapi.NewInjector()
 	disp := dispatcher.New(reg, cb, bh, cfg)
+	disp.SetLimitsSource(storeLimits(st, cfg))
 
 	// Device tokens are resolved via Identity's /internal/introspect, guarded by
 	// the shared PLUGIN_API_KEY. Without it auth is disabled (dev only).
@@ -86,6 +88,7 @@ func main() {
 	if snaps != nil {
 		admin.SetSnapshots(snaps)
 	}
+	admin.SetProtection(cfg.Default, disp)
 	cpHandlers.MountAdmin(admin.Mount)
 	httpSrv := server.NewHTTP(reg, disp, injector, introspector, domainResolver, cpHandlers, serveDashboard, httpAddr)
 

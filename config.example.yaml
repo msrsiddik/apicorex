@@ -1,6 +1,11 @@
 # ApiCoreX gateway config (optional). Set CONFIG_FILE=path to load.
 # Env vars override the global default: RATE_PER_SEC, BULKHEAD_MAX,
 # CB_THRESHOLD, CB_RESET_TIMEOUT, REQUEST_TIMEOUT, HEALTH_INTERVAL.
+#
+# Limits set in the dashboard win over this file. Each plugin entry below is
+# copied into Core's store the first time Core sees it; once a plugin has
+# limits there, edit them in the dashboard — changing this file no longer
+# reaches it, and Core logs a warning saying so.
 
 # Global default applied to every plugin unless overridden below.
 default:

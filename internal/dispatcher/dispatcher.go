@@ -51,7 +51,6 @@ type Dispatcher struct {
 	reg *registry.Registry
 	cb  *protection.CircuitBreaker
 	bh  *protection.Bulkhead
-	cfg config.Config
 
 	transport *http.Transport
 
@@ -63,19 +62,47 @@ type Dispatcher struct {
 	// Only plugins with a configured tenant rate get an entry — nil means
 	// "no per-tenant sub-limit for this plugin", the pre-Phase-4 behavior.
 	tenantRL map[string]*protection.RateLimiter
+	// instances is every registered plugin instance by ID, with the limits it
+	// runs under, so a request reads its timeout without asking the store.
+	instances map[string]instance
+
+	// limits resolves a plugin's limits by name: from cfg until
+	// SetLimitsSource points it at the store.
+	limits LimitsSource
+}
+
+// LimitsSource resolves a plugin's protection limits by name. ownRate reports
+// that its rate is its own rather than inherited: a public plugin without one
+// runs at a tenth of the inherited rate.
+type LimitsSource func(pluginName string) (limits config.Limits, ownRate bool)
+
+type instance struct {
+	name, pluginType string
+	limits           config.Limits
+	// rate and burst are what its limiters were built with, after the public
+	// scaling, so a refresh can tell whether they need rebuilding.
+	rate, burst, tenantRate, tenantBurst float64
+}
+
+func configSource(cfg config.Config) LimitsSource {
+	return func(name string) (config.Limits, bool) {
+		_, own := cfg.Plugins[name]
+		return cfg.For(name), own
+	}
 }
 
 // New builds a Dispatcher. reg supplies plugin targets, cb and bh are the shared
-// circuit breaker and bulkhead, and cfg provides the rate/limit settings applied
-// per plugin in AddRoutes.
+// circuit breaker and bulkhead, and cfg provides each plugin's limits until
+// SetLimitsSource replaces it.
 func New(reg *registry.Registry, cb *protection.CircuitBreaker, bh *protection.Bulkhead, cfg config.Config) *Dispatcher {
 	return &Dispatcher{
-		reg:      reg,
-		cb:       cb,
-		bh:       bh,
-		cfg:      cfg,
-		pluginRL: make(map[string]*protection.RateLimiter),
-		tenantRL: make(map[string]*protection.RateLimiter),
+		reg:       reg,
+		cb:        cb,
+		bh:        bh,
+		pluginRL:  make(map[string]*protection.RateLimiter),
+		tenantRL:  make(map[string]*protection.RateLimiter),
+		instances: make(map[string]instance),
+		limits:    configSource(cfg),
 		transport: &http.Transport{
 			Proxy:                 http.ProxyFromEnvironment,
 			MaxIdleConns:          100,
@@ -115,11 +142,27 @@ func (d *Dispatcher) ProxyFor(target *url.URL) *httputil.ReverseProxy {
 	return proxy
 }
 
-// AddRoutes registers a plugin's routes in the dispatch table and creates its
-// per-plugin rate limiter from config. Calling it again for the same pluginID
-// replaces the plugin's existing routes. pluginType ("internal" or "public")
-// selects the default rate when the plugin has no explicit config override.
+// SetLimitsSource makes src the source of every plugin's limits, from the
+// next registration or refresh on. Call it before plugins register.
+func (d *Dispatcher) SetLimitsSource(src LimitsSource) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.limits = src
+}
+
+// AddRoutes registers a plugin's routes in the dispatch table and sets up its
+// rate limiters, bulkhead and breaker from its limits. Calling it again for
+// the same pluginID replaces the plugin's existing routes. pluginType
+// ("internal" or "public") selects the default rate when the plugin has no
+// rate of its own.
 func (d *Dispatcher) AddRoutes(pluginID, pluginName, pluginType string, routes []manifest.Route) {
+	// Resolved before taking the lock: the source may read the store, and
+	// every request takes this lock to match its route.
+	d.mu.RLock()
+	src := d.limits
+	d.mu.RUnlock()
+	limits, ownRate := src(pluginName)
+
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.removeRoutes(pluginID)
@@ -133,38 +176,103 @@ func (d *Dispatcher) AddRoutes(pluginID, pluginName, pluginType string, routes [
 			permission: r.Permission,
 		})
 	}
-	limits := d.cfg.For(pluginName)
-	rate := limits.RatePerSec
-	burst := limits.RateBurst
-	// "public" plugins default to 1/10th rate unless explicitly overridden in config
-	if pluginType == "public" {
-		if _, overridden := d.cfg.Plugins[pluginName]; !overridden {
-			rate = rate / 10
-			burst = burst / 10
+	// A registration starts afresh: new buckets, whatever was there before.
+	delete(d.instances, pluginID)
+	d.applyLimits(pluginID, instance{name: pluginName, pluginType: pluginType}, limits, ownRate)
+}
+
+// RefreshLimits re-resolves pluginName's limits and applies them to every
+// registered instance of it, for the next request. In-flight requests keep
+// the bulkhead slot they hold; a breaker keeps its state; a rate limiter is
+// rebuilt only if its rate or burst changed, so saving a timeout does not
+// hand every caller a fresh burst.
+func (d *Dispatcher) RefreshLimits(pluginName string) {
+	d.mu.RLock()
+	src := d.limits
+	d.mu.RUnlock()
+	limits, ownRate := src(pluginName)
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for id, inst := range d.instances {
+		if inst.name == pluginName {
+			d.applyLimits(id, inst, limits, ownRate)
 		}
 	}
-	d.pluginRL[pluginID] = protection.NewRateLimiter(rate, burst)
-	// The bulkhead and breaker were built once, from the global default, so
-	// a per-plugin bulkhead_max, cb_threshold or cb_reset_timeout in the
-	// config was accepted and ignored. They take this plugin's own now.
-	d.bh.Configure(pluginID, limits.BulkheadMax)
-	d.cb.Configure(pluginID, limits.CBThreshold, limits.CBResetTimeout)
+}
 
-	// Per-tenant sub-limit is opt-in per plugin (config's tenant_rate_per_sec).
-	// Public plugins get the same 1/10th scaling as their overall budget so
-	// the sub-limit never exceeds the parent limit it's meant to divide.
-	if limits.TenantRatePerSec > 0 {
-		tRate, tBurst := limits.TenantRatePerSec, limits.TenantRateBurst
-		if pluginType == "public" {
-			if _, overridden := d.cfg.Plugins[pluginName]; !overridden {
-				tRate = tRate / 10
-				tBurst = tBurst / 10
-			}
+// RefreshAllLimits is RefreshLimits for every registered plugin — after a
+// change to the default every plugin inherits from.
+func (d *Dispatcher) RefreshAllLimits() {
+	for _, name := range d.instanceNames() {
+		d.RefreshLimits(name)
+	}
+}
+
+func (d *Dispatcher) instanceNames() []string {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	seen := map[string]bool{}
+	var names []string
+	for _, inst := range d.instances {
+		if !seen[inst.name] {
+			seen[inst.name] = true
+			names = append(names, inst.name)
 		}
-		d.tenantRL[pluginID] = protection.NewRateLimiter(tRate, tBurst)
+	}
+	return names
+}
+
+// RunningLimits is what pluginName's instances run under now, after the
+// public scaling, for the dashboard. ok is false when none is registered.
+func (d *Dispatcher) RunningLimits(pluginName string) (limits config.Limits, ok bool) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	for _, inst := range d.instances {
+		if inst.name == pluginName {
+			l := inst.limits
+			l.RatePerSec, l.RateBurst = inst.rate, inst.burst
+			l.TenantRatePerSec, l.TenantRateBurst = inst.tenantRate, inst.tenantBurst
+			return l, true
+		}
+	}
+	return config.Limits{}, false
+}
+
+// applyLimits sets pluginID's limiters, bulkhead limit and breaker settings.
+// prev is the instance as it was, with zero rates when it is new. Called with
+// d.mu held.
+func (d *Dispatcher) applyLimits(pluginID string, prev instance, limits config.Limits, ownRate bool) {
+	inst := instance{name: prev.name, pluginType: prev.pluginType, limits: limits}
+	inst.rate, inst.burst = limits.RatePerSec, limits.RateBurst
+	inst.tenantRate, inst.tenantBurst = limits.TenantRatePerSec, limits.TenantRateBurst
+	// "public" plugins default to 1/10th rate unless given a rate of their
+	// own, and the per-tenant sub-limit scales with it, so it never exceeds
+	// the budget it is meant to divide.
+	if prev.pluginType == "public" && !ownRate {
+		inst.rate, inst.burst = inst.rate/10, inst.burst/10
+		inst.tenantRate, inst.tenantBurst = inst.tenantRate/10, inst.tenantBurst/10
+	}
+	// A bucket holding less than one token never lets a request through.
+	inst.burst = max(inst.burst, 1)
+	if inst.tenantRate > 0 {
+		inst.tenantBurst = max(inst.tenantBurst, 1)
+	}
+
+	if d.pluginRL[pluginID] == nil || inst.rate != prev.rate || inst.burst != prev.burst {
+		d.pluginRL[pluginID] = protection.NewRateLimiter(inst.rate, inst.burst)
+	}
+	// Per-tenant sub-limit is opt-in (tenant_rate_per_sec).
+	if inst.tenantRate > 0 {
+		if d.tenantRL[pluginID] == nil || inst.tenantRate != prev.tenantRate || inst.tenantBurst != prev.tenantBurst {
+			d.tenantRL[pluginID] = protection.NewRateLimiter(inst.tenantRate, inst.tenantBurst)
+		}
 	} else {
 		delete(d.tenantRL, pluginID)
 	}
+	d.bh.Configure(pluginID, limits.BulkheadMax)
+	d.cb.Configure(pluginID, limits.CBThreshold, limits.CBResetTimeout)
+	d.instances[pluginID] = inst
 }
 
 // ProtectionStatus is a per-plugin snapshot of the protection layers'
@@ -236,6 +344,7 @@ func (d *Dispatcher) RemoveRoutes(pluginID string) {
 	d.removeRoutes(pluginID)
 	delete(d.pluginRL, pluginID)
 	delete(d.tenantRL, pluginID)
+	delete(d.instances, pluginID)
 	d.bh.Forget(pluginID)
 	d.cb.Forget(pluginID)
 }
@@ -410,6 +519,7 @@ func (d *Dispatcher) Dispatch(c *gin.Context) {
 	d.mu.RLock()
 	rl := d.pluginRL[entry.pluginID]
 	trl := d.tenantRL[entry.pluginID]
+	requestTimeout := d.instances[entry.pluginID].limits.RequestTimeout
 	d.mu.RUnlock()
 	if rl != nil && !rl.Allow(entry.pluginID) {
 		protection.RequestsRejected.WithLabelValues(plugin, "rate_limit").Inc()
@@ -501,7 +611,7 @@ func (d *Dispatcher) Dispatch(c *gin.Context) {
 	// until the plugin starts answering, not for the whole exchange (see
 	// headerDeadline). WebSocket above is exempt: it upgrades, and then runs
 	// for as long as the conversation does.
-	req, deadline := withHeaderDeadline(req, d.cfg.For(plugin).RequestTimeout)
+	req, deadline := withHeaderDeadline(req, requestTimeout)
 	defer deadline.done()
 	rec := &statusRecorder{ResponseWriter: c.Writer, status: http.StatusOK, onHeader: deadline.stop}
 	pluginEntry.Proxy.ServeHTTP(rec, req)

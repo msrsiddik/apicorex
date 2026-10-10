@@ -11,6 +11,7 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"github.com/msrsiddik/apicorex/internal/config"
 	"github.com/msrsiddik/apicorex/internal/registry"
 	"github.com/msrsiddik/apicorex/internal/store"
 )
@@ -38,7 +39,9 @@ type Handlers struct {
 	// someone's say-so, needs a login in front of it.
 	writable bool
 	prober   Prober
-	snaps    Snapshots // nil when store snapshots are off
+	snaps    Snapshots  // nil when store snapshots are off
+	prot     Protection // nil until SetProtection
+	protBase config.Limits
 }
 
 // New builds the handlers.
@@ -57,6 +60,8 @@ func (h *Handlers) Mount(admin *gin.RouterGroup) {
 	admin.GET("/settings/:plugin/history", h.settingsHistory)
 	admin.GET("/keys", h.listKeys)
 	admin.GET("/store/snapshots", h.listSnapshots)
+	admin.GET("/protection", h.listProtection)
+	admin.GET("/protection/:plugin/history", h.protectionHistory)
 
 	w := admin.Group("", h.requireWritable)
 	w.PUT("/db-config/:plugin", h.save)
@@ -70,6 +75,9 @@ func (h *Handlers) Mount(admin *gin.RouterGroup) {
 	w.DELETE("/keys/:plugin/:id", h.revokeKey)
 	w.PUT("/shared-key", h.setSharedKey)
 	w.POST("/store/snapshots", h.takeSnapshot)
+	w.PUT("/protection/:plugin", h.saveProtection)
+	w.DELETE("/protection/:plugin", h.removeProtection)
+	w.POST("/protection/:plugin/rollback", h.rollbackProtection)
 	// A copy of the whole store — sealed secrets, client addresses in the
 	// audit trail — goes only to a dashboard with a login in front of it.
 	w.GET("/store/snapshots/:name", h.downloadSnapshot)

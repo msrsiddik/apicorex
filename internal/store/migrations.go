@@ -145,4 +145,42 @@ var migrations = []string{
 		settings   TEXT NOT NULL,
 		updated_at TEXT NOT NULL
 	);`,
+
+	// 8: protection limits — rate, bulkhead, circuit breaker, request timeout —
+	// shaped like db_config: plugin '*' is the default, NULL means inherit, and
+	// history is append-only with its id the version. Under both sits Core's
+	// environment and CONFIG_FILE, so a field nobody set here still follows
+	// them. Durations are milliseconds.
+	`CREATE TABLE protection_limits_history (
+		id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+		plugin              TEXT NOT NULL,
+		action              TEXT NOT NULL CHECK (action IN ('save', 'delete', 'rollback')),
+		rate_per_sec        REAL,
+		rate_burst          REAL,
+		tenant_rate_per_sec REAL,
+		tenant_rate_burst   REAL,
+		bulkhead_max        INTEGER,
+		cb_threshold        INTEGER,
+		cb_reset_timeout_ms INTEGER,
+		request_timeout_ms  INTEGER,
+		note                TEXT NOT NULL DEFAULT '',
+		saved_at            TEXT NOT NULL,
+		saved_by            TEXT NOT NULL
+	);
+	CREATE INDEX protection_limits_history_plugin ON protection_limits_history (plugin, id);
+
+	CREATE TABLE protection_limits (
+		plugin              TEXT PRIMARY KEY,
+		rate_per_sec        REAL,
+		rate_burst          REAL,
+		tenant_rate_per_sec REAL,
+		tenant_rate_burst   REAL,
+		bulkhead_max        INTEGER,
+		cb_threshold        INTEGER,
+		cb_reset_timeout_ms INTEGER,
+		request_timeout_ms  INTEGER,
+		version             INTEGER NOT NULL REFERENCES protection_limits_history (id),
+		updated_at          TEXT NOT NULL,
+		updated_by          TEXT NOT NULL
+	);`,
 }
