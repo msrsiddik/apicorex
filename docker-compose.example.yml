@@ -48,6 +48,11 @@ services:
       # Daily snapshots into /data/snapshots, a week kept. 0 turns them off.
       STORE_SNAPSHOT_INTERVAL: 24h
       STORE_SNAPSHOT_KEEP: "7"
+      # Off-site copies of the snapshots, through rclone — e.g. a crypt remote
+      # over Google Drive, "gdrive-crypt:core-store". Both or neither. Keep
+      # CORE_MASTER_KEY out of that remote: a copy opens only with it.
+      STORE_BACKUP_REMOTE: ""
+      STORE_RCLONE_CONF_B64: ""
       # PLUGIN_ALLOWLIST: identity,sync
       # Comma-separated origins allowed to call Core from a browser. Empty =
       # no restriction (dev only).

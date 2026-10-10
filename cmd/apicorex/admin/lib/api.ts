@@ -404,6 +404,53 @@ export function setSharedKey(accept: boolean, force = false): Promise<{ accept_s
   return adminJSON("PUT", "/_core/admin/shared-key", { accept, force });
 }
 
+// ── Store snapshots ─────────────────────────────────────────────────────────
+
+export interface StoreSnapshot {
+  name: string;
+  size: number;
+  created_at: string;
+  uploaded: boolean;
+  uploaded_at?: string;
+}
+
+export interface SnapshotStatus {
+  last_snapshot?: string;
+  last_error?: string;
+  last_upload?: string;
+  last_upload_error?: string;
+  remote_configured: boolean;
+  remote?: string;
+  interval: string;
+  keep: number;
+}
+
+export function fetchSnapshots(): Promise<{ status: SnapshotStatus; snapshots: StoreSnapshot[] }> {
+  return adminJSON("GET", "/_core/admin/store/snapshots");
+}
+
+export function takeSnapshot(): Promise<StoreSnapshot> {
+  return adminJSON("POST", "/_core/admin/store/snapshots");
+}
+
+// downloadSnapshot fetches with the session header — a plain link would carry
+// none — and hands the browser the file.
+export async function downloadSnapshot(name: string): Promise<void> {
+  const res = await fetch(`/_core/admin/store/snapshots/${enc(name)}`, {
+    headers: { Authorization: `Bearer ${sessionToken()}` },
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body && body.error ? body.error : `request failed (${res.status})`);
+  }
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 // ── Prometheus text-exposition parsing ──────────────────────────────────────
 // /metrics is plain-text (no JSON endpoint exists for it), so we parse just
 // the handful of metric families the dashboard cares about. Lines look like:

@@ -81,7 +81,12 @@ func main() {
 	}
 	cpHandlers := controlplane.New(reg, disp, injector, pluginAPIKey, allowlist, pluginAPIKey, apicorexSecret)
 	cpHandlers.SetStore(st)
-	cpHandlers.MountAdmin(adminapi.New(st, reg, cpHandlers.LoginEnabled(), adminapi.PgxProber{}).Mount)
+	snaps := newSnapshots(st)
+	admin := adminapi.New(st, reg, cpHandlers.LoginEnabled(), adminapi.PgxProber{})
+	if snaps != nil {
+		admin.SetSnapshots(snaps)
+	}
+	cpHandlers.MountAdmin(admin.Mount)
 	httpSrv := server.NewHTTP(reg, disp, injector, introspector, domainResolver, cpHandlers, serveDashboard, httpAddr)
 
 	// The gate a reverse proxy asks before issuing a certificate for a hostname
@@ -111,11 +116,12 @@ func main() {
 		disp.RunTenantLimiterSweep(gCtx, 5*time.Minute, 30*time.Minute)
 		return nil
 	})
-	g.Go(func() error {
-		dir, interval, keep := snapshotSettings()
-		st.RunSnapshots(gCtx, dir, interval, keep)
-		return nil
-	})
+	if snaps != nil {
+		g.Go(func() error {
+			snaps.Run(gCtx)
+			return nil
+		})
+	}
 	g.Go(func() error {
 		<-gCtx.Done()
 		shutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

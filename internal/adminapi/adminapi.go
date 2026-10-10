@@ -38,6 +38,7 @@ type Handlers struct {
 	// someone's say-so, needs a login in front of it.
 	writable bool
 	prober   Prober
+	snaps    Snapshots // nil when store snapshots are off
 }
 
 // New builds the handlers.
@@ -55,6 +56,7 @@ func (h *Handlers) Mount(admin *gin.RouterGroup) {
 	admin.GET("/settings", h.listSettings)
 	admin.GET("/settings/:plugin/history", h.settingsHistory)
 	admin.GET("/keys", h.listKeys)
+	admin.GET("/store/snapshots", h.listSnapshots)
 
 	w := admin.Group("", h.requireWritable)
 	w.PUT("/db-config/:plugin", h.save)
@@ -67,6 +69,10 @@ func (h *Handlers) Mount(admin *gin.RouterGroup) {
 	w.POST("/keys/:plugin", h.issueKey)
 	w.DELETE("/keys/:plugin/:id", h.revokeKey)
 	w.PUT("/shared-key", h.setSharedKey)
+	w.POST("/store/snapshots", h.takeSnapshot)
+	// A copy of the whole store — sealed secrets, client addresses in the
+	// audit trail — goes only to a dashboard with a login in front of it.
+	w.GET("/store/snapshots/:name", h.downloadSnapshot)
 }
 
 func (h *Handlers) requireWritable(c *gin.Context) {

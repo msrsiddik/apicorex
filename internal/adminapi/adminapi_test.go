@@ -16,6 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/msrsiddik/apicorex/internal/manifest"
 	"github.com/msrsiddik/apicorex/internal/registry"
+	"github.com/msrsiddik/apicorex/internal/snapshots"
 	"github.com/msrsiddik/apicorex/internal/store"
 )
 
@@ -502,5 +503,70 @@ func TestSettingsOfAPluginThatIsDown(t *testing.T) {
 	_, _, body := h.do(t, http.MethodGet, "/_core/admin/settings", nil)
 	if !strings.Contains(body, `"plugin":"schoolyze"`) || !strings.Contains(body, `"registered":false`) {
 		t.Fatalf("a down plugin missing from the listing: %s", body)
+	}
+}
+
+func snapHarness(t *testing.T, writable bool) *harness {
+	t.Helper()
+	h := newHarness(t, writable, true)
+	m, err := snapshots.New(snapshots.Config{Dir: t.TempDir(), Keep: 7}, h.store, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Re-mount with snapshots on a fresh engine.
+	h.engine = gin.New()
+	a := New(h.store, fakeRegistry{state: map[string][]any{}}, writable, h.prober)
+	a.SetSnapshots(m)
+	a.Mount(h.engine.Group("/_core/admin"))
+	return h
+}
+
+func TestStoreSnapshotsThroughTheAPI(t *testing.T) {
+	h := snapHarness(t, true)
+	code, out, body := h.do(t, http.MethodPost, "/_core/admin/store/snapshots", nil)
+	if code != http.StatusOK || !strings.HasPrefix(out["name"].(string), "core-") {
+		t.Fatalf("take: %d %s", code, body)
+	}
+	name := out["name"].(string)
+
+	code, _, body = h.do(t, http.MethodGet, "/_core/admin/store/snapshots", nil)
+	if code != http.StatusOK || !strings.Contains(body, name) || !strings.Contains(body, `"remote_configured":false`) {
+		t.Fatalf("list: %d %s", code, body)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/_core/admin/store/snapshots/"+name, nil)
+	w := httptest.NewRecorder()
+	h.engine.ServeHTTP(w, req)
+	if w.Code != http.StatusOK || !strings.HasPrefix(w.Body.String(), "SQLite format 3") {
+		t.Fatalf("download: %d %q", w.Code, w.Body.String()[:min(20, w.Body.Len())])
+	}
+	if code, _, _ := h.do(t, http.MethodGet, "/_core/admin/store/snapshots/..%2Fcore.db", nil); code != http.StatusNotFound {
+		t.Errorf("path outside the snapshots: %d", code)
+	}
+
+	audit, _ := h.store.ListAudit(context.Background(), 5, 0)
+	var actions []string
+	for _, a := range audit {
+		actions = append(actions, a.Action)
+	}
+	if !strings.Contains(strings.Join(actions, ","), "store.snapshot.download") || !strings.Contains(strings.Join(actions, ","), "store.snapshot") {
+		t.Fatalf("not audited: %v", actions)
+	}
+}
+
+func TestStoreSnapshotsNeedLogin(t *testing.T) {
+	h := snapHarness(t, false)
+	if code, _, _ := h.do(t, http.MethodPost, "/_core/admin/store/snapshots", nil); code != http.StatusForbidden {
+		t.Errorf("take without login: %d", code)
+	}
+	if code, _, _ := h.do(t, http.MethodGet, "/_core/admin/store/snapshots/core-20261010T023000Z.db", nil); code != http.StatusForbidden {
+		t.Errorf("download without login: %d", code)
+	}
+}
+
+func TestStoreSnapshotsOff(t *testing.T) {
+	h := newHarness(t, true, false)
+	if code, _, _ := h.do(t, http.MethodGet, "/_core/admin/store/snapshots", nil); code != http.StatusServiceUnavailable {
+		t.Errorf("%d", code)
 	}
 }

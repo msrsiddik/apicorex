@@ -56,6 +56,7 @@ pipeline {
         string(name: 'REQUEST_TIMEOUT', defaultValue: '', description: 'compose default: 30s')
         string(name: 'HEALTH_INTERVAL', defaultValue: '', description: 'compose default: 30s')
         string(name: 'STORE_SNAPSHOT_INTERVAL', defaultValue: '', description: 'How often the config store snapshots itself onto its volume, Go duration; 0 turns it off (compose default: 24h)')
+        string(name: 'STORE_BACKUP_REMOTE', defaultValue: '', description: 'rclone remote:path the store\'s snapshots are copied to, e.g. gdrive-crypt:core-store. Blank keeps them on the server only. Set, it needs the STORE_RCLONE_CONF_B64 credential.')
         string(name: 'STORE_SNAPSHOT_KEEP', defaultValue: '', description: 'Snapshots kept (compose default: 7)')
         password(name: 'POSTGRES_PASSWORD', defaultValue: '', description: 'compose default: apicorex')
         password(name: 'PLUGIN_API_KEY', defaultValue: '', description: 'Shared secret with plugins (compose default: change-me-plugin-key)')
@@ -144,6 +145,7 @@ pipeline {
                 HEALTH_INTERVAL = "${params.HEALTH_INTERVAL}"
                 STORE_SNAPSHOT_INTERVAL = "${params.STORE_SNAPSHOT_INTERVAL}"
                 STORE_SNAPSHOT_KEEP = "${params.STORE_SNAPSHOT_KEEP}"
+                STORE_BACKUP_REMOTE = "${params.STORE_BACKUP_REMOTE}"
                 // From the Credentials Store, not a parameter — see the note
                 // at the top of this file.
                 CORE_MASTER_KEY = credentials('CORE_MASTER_KEY')
@@ -152,6 +154,18 @@ pipeline {
                 APICOREX_SECRET = "${params.APICOREX_SECRET}"
             }
             steps {
+                // The rclone config only when off-site copies are on:
+                // credentials() fails a build that cannot find one. It is the
+                // config base64-encoded (base64 -w0 rclone.conf) in a Secret
+                // text credential, passed as an environment variable rather
+                // than a mounted file, which Jenkins deletes when this step
+                // ends and a later container restart would then miss.
+                script {
+                    def creds = []
+                    if (params.STORE_BACKUP_REMOTE?.trim()) {
+                        creds << string(credentialsId: 'STORE_RCLONE_CONF_B64', variable: 'STORE_RCLONE_CONF_B64')
+                    }
+                    withCredentials(creds) {
                 sh '''
                     set -eu
                     PROFILE_ARGS=""
@@ -165,6 +179,8 @@ pipeline {
                         echo "postgres://${POSTGRES_USER:-apicorex}:<POSTGRES_PASSWORD>@host.docker.internal:${POSTGRES_PORT:-15432}/${POSTGRES_DB:-apicorex}?sslmode=disable"
                     fi
                 '''
+                    }
+                }
             }
         }
     }

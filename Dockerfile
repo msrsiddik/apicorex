@@ -38,7 +38,9 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 
 # ── Runtime stage ──────────────────────────────────────────────────────────
 FROM alpine:3.20
-RUN apk add --no-cache ca-certificates wget && \
+# rclone copies the store's snapshots off the server when STORE_BACKUP_REMOTE
+# is set (internal/snapshots).
+RUN apk add --no-cache ca-certificates wget rclone && \
     adduser -D -u 10001 app && \
     mkdir -p /data && chown app:app /data
 WORKDIR /app
