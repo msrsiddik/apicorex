@@ -53,7 +53,7 @@ pipeline {
         string(name: 'BULKHEAD_MAX', defaultValue: '', description: 'compose default: 100')
         string(name: 'CB_THRESHOLD', defaultValue: '', description: 'compose default: 5')
         string(name: 'CB_RESET_TIMEOUT', defaultValue: '', description: 'compose default: 30s')
-        string(name: 'REQUEST_TIMEOUT', defaultValue: '', description: 'compose default: 30s')
+        string(name: 'REQUEST_TIMEOUT', defaultValue: '', description: 'how long a plugin may take to start answering (send headers); streams and downloads are not cut. compose default: 120s')
         string(name: 'HEALTH_INTERVAL', defaultValue: '', description: 'compose default: 30s')
         string(name: 'STORE_SNAPSHOT_INTERVAL', defaultValue: '', description: 'How often the config store snapshots itself onto its volume, Go duration; 0 turns it off (compose default: 24h)')
         string(name: 'STORE_BACKUP_REMOTE', defaultValue: '', description: 'rclone remote:path the store\'s snapshots are copied to, e.g. gdrive-crypt:core-store. Blank keeps them on the server only. Set, it needs the STORE_RCLONE_CONF_B64 credential.')

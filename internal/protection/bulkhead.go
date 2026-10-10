@@ -13,6 +13,9 @@ type Bulkhead struct {
 	mu      sync.Mutex
 	active  map[string]int
 	maxConc int
+	// limits holds a plugin's own limit, set when its routes are added.
+	// A plugin without one uses maxConc.
+	limits map[string]int
 }
 
 // NewBulkhead returns a Bulkhead allowing maxConcurrent in-flight requests per
@@ -21,6 +24,7 @@ func NewBulkhead(maxConcurrent int) *Bulkhead {
 	return &Bulkhead{
 		active:  make(map[string]int),
 		maxConc: maxConcurrent,
+		limits:  make(map[string]int),
 	}
 }
 
@@ -30,7 +34,7 @@ func NewBulkhead(maxConcurrent int) *Bulkhead {
 func (b *Bulkhead) Acquire(pluginID string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.active[pluginID] >= b.maxConc {
+	if b.active[pluginID] >= b.limitFor(pluginID) {
 		return ErrBulkheadFull
 	}
 	b.active[pluginID]++
@@ -54,7 +58,42 @@ func (b *Bulkhead) Active(pluginID string) int {
 	return b.active[pluginID]
 }
 
-// Max returns the configured per-plugin concurrency limit.
+// Max returns the default per-plugin concurrency limit.
 func (b *Bulkhead) Max() int {
+	return b.maxConc
+}
+
+// Configure sets one plugin's concurrency limit. A limit of zero or less
+// leaves it on the default. Slots already held are kept; a lower limit only
+// refuses new ones.
+func (b *Bulkhead) Configure(pluginID string, limit int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if limit > 0 {
+		b.limits[pluginID] = limit
+	} else {
+		delete(b.limits, pluginID)
+	}
+}
+
+// Forget drops a plugin's own limit, when its routes are removed.
+func (b *Bulkhead) Forget(pluginID string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	delete(b.limits, pluginID)
+}
+
+// MaxFor returns the concurrency limit in force for a plugin.
+func (b *Bulkhead) MaxFor(pluginID string) int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.limitFor(pluginID)
+}
+
+// limitFor is MaxFor with b.mu held.
+func (b *Bulkhead) limitFor(pluginID string) int {
+	if l, ok := b.limits[pluginID]; ok {
+		return l
+	}
 	return b.maxConc
 }

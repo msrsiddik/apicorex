@@ -44,7 +44,7 @@ func Defaults() Config {
 			BulkheadMax:    100,
 			CBThreshold:    5,
 			CBResetTimeout: 30 * time.Second,
-			RequestTimeout: 30 * time.Second,
+			RequestTimeout: 120 * time.Second,
 		},
 		Plugins:        map[string]Limits{},
 		HealthInterval: 30 * time.Second,

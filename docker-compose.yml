@@ -107,7 +107,7 @@ services:
       BULKHEAD_MAX: ${BULKHEAD_MAX:-100}
       CB_THRESHOLD: ${CB_THRESHOLD:-5}
       CB_RESET_TIMEOUT: ${CB_RESET_TIMEOUT:-30s}
-      REQUEST_TIMEOUT: ${REQUEST_TIMEOUT:-30s}
+      REQUEST_TIMEOUT: ${REQUEST_TIMEOUT:-120s}
       HEALTH_INTERVAL: ${HEALTH_INTERVAL:-30s}
     # Published on every interface by default, which means Core is reachable on
     # the public IP over plain HTTP, past any TLS-terminating proxy in front of

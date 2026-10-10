@@ -26,6 +26,14 @@ type CircuitBreaker struct {
 	lastFailure  map[string]time.Time
 	threshold    int
 	resetTimeout time.Duration
+	// perPlugin holds a plugin's own threshold and reset, set when its
+	// routes are added. A plugin without them uses the two above.
+	perPlugin map[string]cbLimits
+}
+
+type cbLimits struct {
+	threshold    int
+	resetTimeout time.Duration
 }
 
 // NewCircuitBreaker returns a breaker that opens after threshold consecutive
@@ -37,7 +45,37 @@ func NewCircuitBreaker(threshold int, resetTimeout time.Duration) *CircuitBreake
 		lastFailure:  make(map[string]time.Time),
 		threshold:    threshold,
 		resetTimeout: resetTimeout,
+		perPlugin:    make(map[string]cbLimits),
 	}
+}
+
+// Configure sets one plugin's threshold and reset timeout. A zero value
+// leaves that one on the default. The breaker's current state is kept.
+func (cb *CircuitBreaker) Configure(pluginID string, threshold int, resetTimeout time.Duration) {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+	cb.perPlugin[pluginID] = cbLimits{threshold: threshold, resetTimeout: resetTimeout}
+}
+
+// Forget drops a plugin's own settings, when its routes are removed.
+func (cb *CircuitBreaker) Forget(pluginID string) {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+	delete(cb.perPlugin, pluginID)
+}
+
+// limits returns the threshold and reset in force for a plugin; cb.mu held.
+func (cb *CircuitBreaker) limits(pluginID string) (int, time.Duration) {
+	th, rt := cb.threshold, cb.resetTimeout
+	if l, ok := cb.perPlugin[pluginID]; ok {
+		if l.threshold > 0 {
+			th = l.threshold
+		}
+		if l.resetTimeout > 0 {
+			rt = l.resetTimeout
+		}
+	}
+	return th, rt
 }
 
 // Allow reports whether a request may proceed. It returns an error when the
@@ -49,7 +87,7 @@ func (cb *CircuitBreaker) Allow(pluginID string) error {
 	state := cb.states[pluginID]
 	switch state {
 	case stateOpen:
-		if time.Since(cb.lastFailure[pluginID]) > cb.resetTimeout {
+		if _, reset := cb.limits(pluginID); time.Since(cb.lastFailure[pluginID]) > reset {
 			cb.states[pluginID] = stateHalfOpen
 			return nil
 		}
@@ -74,7 +112,7 @@ func (cb *CircuitBreaker) RecordFailure(pluginID string) {
 	defer cb.mu.Unlock()
 	cb.failures[pluginID]++
 	cb.lastFailure[pluginID] = time.Now()
-	if cb.failures[pluginID] >= cb.threshold {
+	if threshold, _ := cb.limits(pluginID); cb.failures[pluginID] >= threshold {
 		cb.states[pluginID] = stateOpen
 	}
 }

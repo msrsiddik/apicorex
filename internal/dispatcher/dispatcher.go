@@ -7,6 +7,7 @@ package dispatcher
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log"
 	"net"
@@ -99,6 +100,13 @@ func (d *Dispatcher) ProxyFor(target *url.URL) *httputil.ReverseProxy {
 			// path is left as-is — plugins serve the same paths Core routes
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			if errors.Is(context.Cause(r.Context()), errUpstreamTimeout) {
+				log.Printf("[proxy] %s %s: %v", r.Method, r.URL.Path, errUpstreamTimeout)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusGatewayTimeout)
+				_, _ = w.Write([]byte(`{"error":"plugin did not answer in time"}`))
+				return
+			}
 			log.Printf("[proxy] error proxying %s %s: %v", r.Method, r.URL.Path, err)
 			w.WriteHeader(http.StatusBadGateway)
 			_, _ = w.Write([]byte(`{"error":"plugin unavailable"}`))
@@ -136,6 +144,11 @@ func (d *Dispatcher) AddRoutes(pluginID, pluginName, pluginType string, routes [
 		}
 	}
 	d.pluginRL[pluginID] = protection.NewRateLimiter(rate, burst)
+	// The bulkhead and breaker were built once, from the global default, so
+	// a per-plugin bulkhead_max, cb_threshold or cb_reset_timeout in the
+	// config was accepted and ignored. They take this plugin's own now.
+	d.bh.Configure(pluginID, limits.BulkheadMax)
+	d.cb.Configure(pluginID, limits.CBThreshold, limits.CBResetTimeout)
 
 	// Per-tenant sub-limit is opt-in per plugin (config's tenant_rate_per_sec).
 	// Public plugins get the same 1/10th scaling as their overall budget so
@@ -174,7 +187,7 @@ func (d *Dispatcher) ProtectionStatus(pluginID string) ProtectionStatus {
 	ps := ProtectionStatus{
 		CircuitState:   d.cb.State(pluginID),
 		BulkheadActive: d.bh.Active(pluginID),
-		BulkheadMax:    d.bh.Max(),
+		BulkheadMax:    d.bh.MaxFor(pluginID),
 	}
 	if rl != nil {
 		ps.RateTokens = rl.Tokens(pluginID)
@@ -223,6 +236,8 @@ func (d *Dispatcher) RemoveRoutes(pluginID string) {
 	d.removeRoutes(pluginID)
 	delete(d.pluginRL, pluginID)
 	delete(d.tenantRL, pluginID)
+	d.bh.Forget(pluginID)
+	d.cb.Forget(pluginID)
 }
 
 func (d *Dispatcher) removeRoutes(pluginID string) {
@@ -482,8 +497,13 @@ func (d *Dispatcher) Dispatch(c *gin.Context) {
 		return
 	}
 
-	// HTTP → streaming reverse proxy
-	rec := &statusRecorder{ResponseWriter: c.Writer, status: http.StatusOK}
+	// HTTP → streaming reverse proxy, under this plugin's request timeout —
+	// until the plugin starts answering, not for the whole exchange (see
+	// headerDeadline). WebSocket above is exempt: it upgrades, and then runs
+	// for as long as the conversation does.
+	req, deadline := withHeaderDeadline(req, d.cfg.For(plugin).RequestTimeout)
+	defer deadline.done()
+	rec := &statusRecorder{ResponseWriter: c.Writer, status: http.StatusOK, onHeader: deadline.stop}
 	pluginEntry.Proxy.ServeHTTP(rec, req)
 	span.SetAttributes(attribute.Int("http.status_code", rec.status))
 
@@ -509,12 +529,18 @@ type statusRecorder struct {
 	gin.ResponseWriter
 	status  int
 	written bool
+	// onHeader runs when the response headers go out: the plugin has started
+	// answering, and its request timeout no longer applies.
+	onHeader func()
 }
 
 func (r *statusRecorder) WriteHeader(code int) {
 	if !r.written {
 		r.status = code
 		r.written = true
+		if r.onHeader != nil {
+			r.onHeader()
+		}
 	}
 	r.ResponseWriter.WriteHeader(code)
 }

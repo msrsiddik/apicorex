@@ -68,7 +68,7 @@ services:
       BULKHEAD_MAX: "100"
       CB_THRESHOLD: "5"
       CB_RESET_TIMEOUT: "30s"
-      REQUEST_TIMEOUT: "30s"
+      REQUEST_TIMEOUT: "120s"
       HEALTH_INTERVAL: "30s"
     ports:
       - "9999:9999"
