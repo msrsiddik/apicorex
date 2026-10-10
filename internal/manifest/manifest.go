@@ -167,4 +167,10 @@ type Manifest struct {
 	// police; Core would have to be told which routes belong to which module,
 	// and that is exactly the domain knowledge this design keeps out of it.
 	Features json.RawMessage `json:"features,omitempty"`
+
+	// Settings are what an operator may set for this plugin from the gateway
+	// dashboard instead of its environment — see setting.go. Core renders the
+	// form from them and validates against the declared type, and interprets
+	// nothing else: a setting means only what its plugin says it means.
+	Settings []Setting `json:"settings,omitempty"`
 }

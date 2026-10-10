@@ -222,3 +222,40 @@ func TestFailedReloadOpensNoWindow(t *testing.T) {
 		t.Fatal("a reload opened a maintenance window")
 	}
 }
+
+func TestSettingsFetchAndHeartbeat(t *testing.T) {
+	h := newCPHarness(t, nil, true)
+	ctx := context.Background()
+
+	// Nothing set is the normal state, not an error.
+	code, out := h.post("/_core/config/settings", map[string]string{"api_key": "plugin-key", "plugin": "schoolyze"})
+	if code != http.StatusOK || len(out["values"].(map[string]any)) != 0 || out["version"].(float64) != 0 {
+		t.Fatalf("empty: %d %v", code, out)
+	}
+	if code, _ := h.post("/_core/config/settings", map[string]string{"api_key": "wrong", "plugin": "schoolyze"}); code != http.StatusUnauthorized {
+		t.Errorf("wrong key: %d", code)
+	}
+
+	five := "5"
+	version, err := h.store.SaveSettings(ctx, "schoolyze", map[string]*string{"PDF_MAX_CONCURRENT": &five}, "", "dashboard")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, out = h.post("/_core/config/settings", map[string]string{"api_key": "plugin-key", "plugin": "schoolyze"})
+	if out["values"].(map[string]any)["PDF_MAX_CONCURRENT"] != "5" || out["version"].(float64) != float64(version) {
+		t.Fatalf("fetch: %v", out)
+	}
+
+	id, token := h.register("schoolyze")
+	_, out = h.post("/_core/heartbeat", map[string]any{
+		"plugin_id": id, "plugin_token": token, "settings_loaded": true,
+		"settings_version": version - 1, "settings_from_env": []string{"PUBLIC_BASE_URL"},
+	})
+	if out["settings_version"].(float64) != float64(version) {
+		t.Fatalf("heartbeat did not carry the settings version: %v", out)
+	}
+	st, ok := h.reg.SettingsStateByName("schoolyze")
+	if !ok || !st.Loaded || st.Version != version-1 || len(st.FromEnv) != 1 || st.FromEnv[0] != "PUBLIC_BASE_URL" {
+		t.Fatalf("reported state not kept: %+v %v", st, ok)
+	}
+}

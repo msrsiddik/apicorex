@@ -71,4 +71,30 @@ var migrations = []string{
 		finished_at  TEXT
 	);
 	CREATE INDEX plugin_commands_plugin ON plugin_commands (plugin, id);`,
+
+	// 4: plugin settings set from the dashboard, one row per plugin and key.
+	// No row means "not set here": the plugin falls to its environment, then
+	// its declared default. History works as for db_config — append-only, its
+	// id the version — so a plugin's settings version is the latest history id
+	// for it, and clearing a key moves it too.
+	`CREATE TABLE plugin_settings_history (
+		id       INTEGER PRIMARY KEY AUTOINCREMENT,
+		plugin   TEXT NOT NULL,
+		key      TEXT NOT NULL,
+		value    TEXT,
+		note     TEXT NOT NULL DEFAULT '',
+		saved_at TEXT NOT NULL,
+		saved_by TEXT NOT NULL
+	);
+	CREATE INDEX plugin_settings_history_plugin ON plugin_settings_history (plugin, id);
+
+	CREATE TABLE plugin_settings (
+		plugin     TEXT NOT NULL,
+		key        TEXT NOT NULL,
+		value      TEXT NOT NULL,
+		version    INTEGER NOT NULL REFERENCES plugin_settings_history (id),
+		updated_at TEXT NOT NULL,
+		updated_by TEXT NOT NULL,
+		PRIMARY KEY (plugin, key)
+	);`,
 }

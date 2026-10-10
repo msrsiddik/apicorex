@@ -194,6 +194,63 @@ rather than running whenever you next come back.
 
 ---
 
+## Settings from the dashboard (optional)
+
+Anything your plugin reads from its environment can instead be set per
+deployment in the gateway dashboard. Declare each one in the manifest:
+
+```json
+"settings": [
+  { "key": "PDF_MAX_CONCURRENT", "type": "int", "default": "3",
+    "description": "Documents rendering at once" },
+  { "key": "BUSINESS_TZ", "type": "string", "default": "Asia/Dhaka" },
+  { "key": "MODE", "type": "enum", "enum": ["simple", "full"], "default": "simple" }
+]
+```
+
+`key` is the environment variable you already read. `type` is one of
+`string`, `int`, `bool` (`true`/`false`), `duration` (Go syntax: `30s`,
+`5m`), `time` (`HH:MM`), `url` (absolute), or `enum`. The dashboard builds
+its form from this and refuses values that do not fit. Declare a secret with
+`"secret": true`; the dashboard shows it but does not take it — secrets stay
+in your environment for now.
+
+At startup, before you use any of them, ask Core for what is set:
+
+```json
+POST {CORE_URL}/_core/config/settings
+{ "api_key": "<PLUGIN_API_KEY>", "plugin": "billing" }
+```
+
+```json
+{ "values": { "PDF_MAX_CONCURRENT": "5" }, "version": 12 }
+```
+
+An empty `values` with `200` is the normal state for a plugin nobody has
+configured. A `404` from an older Core means it has no settings: carry on
+with your environment and defaults. Retry connection errors with backoff, as
+for registration.
+
+For each key, use **a non-empty environment variable if there is one, else
+the value from Core, else your declared default.** The environment stays the
+way back.
+
+Report on every heartbeat what you loaded:
+
+```json
+{ "plugin_id": "...", "plugin_token": "...",
+  "settings_loaded": true, "settings_version": 12,
+  "settings_from_env": ["PUBLIC_BASE_URL"] }
+```
+
+`settings_from_env` lists the keys your environment overrides, so the
+dashboard can show that a value saved there is not in effect. The heartbeat
+reply carries `settings_version`; when it differs from yours, settings have
+changed and apply at your next start — the dashboard offers a restart. There
+is no reload for settings.
+
+---
+
 ## Tenant context — injected headers
 
 After resolving the device token (by calling Identity's `/internal/introspect`), Core injects **trusted headers** into the request. A client cannot spoof them: Core strips every client-supplied `X-ApiCoreX-*` header on every request, then sets the real values from the introspection result.

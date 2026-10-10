@@ -307,6 +307,55 @@ export function fetchCommands(plugin: string): Promise<PluginCommand[]> {
   return adminJSON("GET", `/_core/admin/commands/${enc(plugin)}?limit=5`);
 }
 
+// ── Plugin settings ─────────────────────────────────────────────────────────
+// Declared by each plugin in its manifest; Core renders and validates from
+// the declaration and knows nothing else about them.
+
+export interface SettingView {
+  key: string;
+  type: "string" | "int" | "bool" | "duration" | "time" | "url" | "enum" | "";
+  default?: string;
+  description?: string;
+  enum?: string[];
+  secret?: boolean;
+  value: string;
+  set: boolean;
+  updated_at?: string;
+  updated_by?: string;
+  from_env: boolean;
+}
+
+export interface PluginSettings {
+  plugin: string;
+  registered: boolean;
+  settings: SettingView[];
+  undeclared: { key: string; value: string }[];
+  version: number;
+  running_version: number;
+  loads_settings: boolean;
+}
+
+export interface SettingChange {
+  version: number;
+  key: string;
+  value: string | null;
+  note: string;
+  saved_at: string;
+  saved_by: string;
+}
+
+export function fetchSettings(): Promise<PluginSettings[]> {
+  return adminJSON("GET", "/_core/admin/settings");
+}
+
+export function saveSettings(plugin: string, values: Record<string, string | null>, note: string): Promise<{ version: number }> {
+  return adminJSON("PUT", `/_core/admin/settings/${enc(plugin)}`, { values, note });
+}
+
+export function fetchSettingsHistory(plugin: string): Promise<SettingChange[]> {
+  return adminJSON("GET", `/_core/admin/settings/${enc(plugin)}/history`);
+}
+
 // ── Prometheus text-exposition parsing ──────────────────────────────────────
 // /metrics is plain-text (no JSON endpoint exists for it), so we parse just
 // the handful of metric families the dashboard cares about. Lines look like:
