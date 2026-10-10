@@ -52,8 +52,29 @@ function sectionFromPath(pathname: string): SectionId {
   return hit ?? "overview";
 }
 
+const SIDEBAR_KEY = "apicorex_dashboard_sidebar";
+
 export default function Home() {
   const [auth, setAuth] = useState<AuthState>("checking");
+  // The rail is remembered per browser, so a reload does not undo it.
+  const [collapsed, setCollapsed] = useState(false);
+  useEffect(() => {
+    try {
+      setCollapsed(localStorage.getItem(SIDEBAR_KEY) === "collapsed");
+    } catch {
+      /* storage blocked: start expanded */
+    }
+  }, []);
+  const toggleCollapsed = useCallback(() => {
+    setCollapsed((c) => {
+      try {
+        localStorage.setItem(SIDEBAR_KEY, c ? "expanded" : "collapsed");
+      } catch {
+        /* storage blocked: the choice lasts until reload */
+      }
+      return !c;
+    });
+  }, []);
   const [section, setSectionState] = useState<SectionId>("overview");
 
   useEffect(() => {
@@ -129,6 +150,8 @@ export default function Home() {
         active={section}
         onNavigate={setSection}
         onLogout={() => setAuth("unauthenticated")}
+        collapsed={collapsed}
+        onToggleCollapse={toggleCollapsed}
       />
       <main className="flex-1 overflow-y-auto p-6">
         {section === "overview" ? (

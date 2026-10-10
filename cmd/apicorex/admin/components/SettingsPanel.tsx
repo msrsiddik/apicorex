@@ -167,9 +167,9 @@ function PluginCard({ p, onSaved }: { p: PluginSettings; onSaved: () => void }) 
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-xs text-muted-foreground">
-                <th className="py-1 pr-3 font-medium">Setting</th>
+                <th className="w-1/3 py-1 pr-3 font-medium">Setting</th>
                 <th className="py-1 pr-3 font-medium">Value</th>
-                <th className="py-1 font-medium">In effect from</th>
+                <th className="w-36 py-1 font-medium">In effect from</th>
               </tr>
             </thead>
             <tbody>
@@ -199,7 +199,7 @@ function PluginCard({ p, onSaved }: { p: PluginSettings; onSaved: () => void }) 
           {dirty && (
             <div className="mt-4 flex flex-wrap items-center gap-2">
               <Input
-                className="max-w-sm"
+                className="min-w-[16rem] flex-1"
                 placeholder="Note for the history (optional)"
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
@@ -246,7 +246,7 @@ function SettingRow({ s, draft, onChange }: { s: SettingView; draft: string | un
           <Input
             type="password"
             autoComplete="new-password"
-            className="max-w-sm font-mono"
+            className="font-mono"
             placeholder={s.set ? "set — type to replace" : "not set"}
             value={draft ?? ""}
             onChange={(e) => onChange(e.target.value)}
@@ -273,7 +273,7 @@ function SettingRow({ s, draft, onChange }: { s: SettingView; draft: string | un
       <td className="py-2 pr-3">
         {s.type === "bool" ? (
           <select
-            className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+            className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
             value={value}
             onChange={(e) => onChange(e.target.value)}
           >
@@ -283,7 +283,7 @@ function SettingRow({ s, draft, onChange }: { s: SettingView; draft: string | un
           </select>
         ) : s.type === "enum" ? (
           <select
-            className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+            className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
             value={value}
             onChange={(e) => onChange(e.target.value)}
           >
@@ -296,7 +296,7 @@ function SettingRow({ s, draft, onChange }: { s: SettingView; draft: string | un
           </select>
         ) : (
           <Input
-            className="max-w-sm font-mono"
+            className="font-mono"
             inputMode={s.type === "int" ? "numeric" : undefined}
             placeholder={placeholder}
             value={value}
