@@ -3,10 +3,20 @@ package dispatcher
 import (
 	"encoding/base64"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/gin-gonic/gin"
+	"github.com/msrsiddik/apicorex/internal/auth"
+	"github.com/msrsiddik/apicorex/internal/config"
 	"github.com/msrsiddik/apicorex/internal/manifest"
+	"github.com/msrsiddik/apicorex/internal/middleware"
+	"github.com/msrsiddik/apicorex/internal/protection"
 	"github.com/msrsiddik/apicorex/internal/registry"
 )
 
@@ -256,5 +266,62 @@ func TestBuildNavCarriesGroupLabels(t *testing.T) {
 	}
 	if decoded[0].GroupLabels["en"] != "Accounting" {
 		t.Fatalf("label did not survive the header: %+v", decoded[0])
+	}
+}
+
+// Someone who signs in at /login with nowhere to return to is sent to "/".
+// Nothing owns it, so that used to be {"error":"no plugin handles this route"}
+// after a sign-in that had worked. A signed-in browser now goes to the first
+// page of its menu; anyone or anything else still gets the 404.
+func TestRootSendsASignedInBrowserToItsFirstPage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	reg := registry.New()
+	d := New(reg, protection.NewCircuitBreaker(5, time.Second), protection.NewBulkhead(10), config.Defaults())
+	noProxy := func(u *url.URL) *httputil.ReverseProxy { return &httputil.ReverseProxy{} }
+	if err := reg.Register("acc-1", "accounting", "http://acc", "1", "internal", manifest.Manifest{
+		Name: "accounting",
+		Nav:  []manifest.NavItem{item("ledger", "/accounting/", perm("ledger:read"), groupOrder(20))},
+	}, noProxy); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.Register("sch-1", "schoolyze", "http://sch", "1", "internal", manifest.Manifest{
+		Name: "schoolyze",
+		Nav:  []manifest.NavItem{item("dashboard", "/school/", groupOrder(10))},
+	}, noProxy); err != nil {
+		t.Fatal(err)
+	}
+
+	serve := func(path, accept string, id *auth.Identity) *httptest.ResponseRecorder {
+		e := gin.New()
+		e.Use(func(c *gin.Context) {
+			if id != nil {
+				middleware.SetIdentity(c, id)
+			}
+		})
+		e.NoRoute(d.Dispatch)
+		r := httptest.NewRequest(http.MethodGet, path, nil)
+		r.Header.Set("Accept", accept)
+		w := httptest.NewRecorder()
+		e.ServeHTTP(w, r)
+		return w
+	}
+	const browser = "text/html,application/xhtml+xml"
+	clerk := &auth.Identity{UserType: "tenant_user", Permissions: []string{"student:read"}}
+
+	if w := serve("/", browser, clerk); w.Code != http.StatusFound || w.Header().Get("Location") != "/school/" {
+		t.Errorf("signed-in browser at /: %d %q, want 302 to /school/", w.Code, w.Header().Get("Location"))
+	}
+	accountant := &auth.Identity{UserType: "tenant_user", Permissions: []string{"ledger:read"}}
+	if w := serve("/", browser, accountant); w.Header().Get("Location") != "/school/" {
+		t.Errorf("menu order: sent to %q, want the first group's /school/", w.Header().Get("Location"))
+	}
+	for name, w := range map[string]*httptest.ResponseRecorder{
+		"not signed in": serve("/", browser, nil),
+		"an API client": serve("/", "application/json", clerk),
+		"another path":  serve("/nothing-here", browser, clerk),
+	} {
+		if w.Code != http.StatusNotFound {
+			t.Errorf("%s: %d, want the 404", name, w.Code)
+		}
 	}
 }

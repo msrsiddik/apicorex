@@ -471,6 +471,10 @@ func (d *Dispatcher) Dispatch(c *gin.Context) {
 
 	entry := d.match(method, path)
 	if entry == nil {
+		if home := d.homeFor(c); home != "" {
+			c.Redirect(http.StatusFound, home)
+			return
+		}
 		c.JSON(http.StatusNotFound, gin.H{"error": "no plugin handles this route"})
 		return
 	}
@@ -702,6 +706,32 @@ func (d *Dispatcher) proxyWebSocket(c *gin.Context, entry *registry.PluginEntry)
 // Same test as the login redirect, and for the same reason: guessing from user
 // agents would be a rule nobody could predict. A plugin serving HTML asks for
 // HTML.
+// homeFor is where a signed-in person opening the bare origin belongs: the
+// first page of the suite's menu they can open. "" when this is not that
+// request, or there is nowhere to send them.
+//
+// Nothing owns "/" unless a plugin declares it, and the sign-in page sends
+// anyone who reached it directly — with no page to return to — to "/". They
+// were signed in and then shown {"error":"no plugin handles this route"},
+// which reads as a failed sign-in. Only a browser's GET of "/" is answered
+// this way, and only when no route matched, so a plugin that does own "/" —
+// a tenant's website on its own domain — still gets it, and an API client
+// still gets its 404.
+func (d *Dispatcher) homeFor(c *gin.Context) string {
+	if c.Request.URL.Path != "/" || !wantsNav(c) {
+		return ""
+	}
+	id := middleware.IdentityFrom(c)
+	if id == nil {
+		return ""
+	}
+	nav := buildNav(d.reg.List(), id.Permissions, id.Features)
+	if len(nav) == 0 {
+		return ""
+	}
+	return nav[0].Href
+}
+
 func wantsNav(c *gin.Context) bool {
 	if c.Request.Method != http.MethodGet {
 		return false
