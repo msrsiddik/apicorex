@@ -237,7 +237,7 @@ separate files would give each its own config.
 | `GET /health` | no | Liveness |
 | `GET /plugins` | no | Registered plugins |
 | `GET /dashboard/*` | dashboard session | Embedded gateway dashboard (plugin registry, route table, breaker/bulkhead state, two gated operator actions) |
-| `GET /plugin` | dashboard session | Dashboard entry point (same SPA as `/dashboard`) |
+| `GET /plugin` | none | Redirects to `/dashboard/plugin`, the plugins screen's old address |
 | `GET /docs` | dashboard session | Scalar UI — log in via `/dashboard` first |
 | `GET /docs/openapi.json` | dashboard session | Merged OpenAPI (Core + plugins) |
 | `GET /metrics` | no | Prometheus metrics |
@@ -256,7 +256,7 @@ separate files would give each its own config.
 ```
 cmd/apicorex/      entrypoint + embedded dashboard
   admin/           gateway dashboard: Next.js SPA, statically exported and
-                    embedded into the binary (served at /dashboard, /plugin)
+                    embedded into the binary (served at /dashboard)
 internal/
   auth/            device-token introspection client (calls Identity)
   config/          config-driven protection limits

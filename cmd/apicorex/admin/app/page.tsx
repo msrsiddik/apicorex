@@ -25,19 +25,15 @@ const POLL_MS = 10_000;
 type AuthState = "checking" | "authenticated" | "unauthenticated";
 
 // The dashboard is a statically exported SPA served under basePath
-// "/dashboard" (see cmd/apicorex/dashboard.go). /dashboard and / both render
-// this same overview page; /plugin is a second, explicit Go route serving
-// the identical index.html (its JS/CSS still load from /dashboard/_next/...,
-// since basePath only affects asset URLs, not this route) so the plugins tab
-// gets its own top-level URL instead of nesting under /dashboard.
-//
-// The config screens live under /dashboard/ rather than beside /plugin: the
-// root of the URL space belongs to plugin routes, and a plugin could own
-// /database. Go's /dashboard/* handler serves index.html for any path it has
-// no file for, so these need no route of their own.
+// "/dashboard" (see cmd/apicorex/dashboard.go). Every screen lives under
+// /dashboard/: the root of the URL space belongs to plugin routes, and a
+// plugin could own /database or /plugin. Go's /dashboard/* handler serves
+// index.html for any path it has no file for, so a screen needs no route of
+// its own. The plugins screen used to sit at /plugin; that now redirects
+// here (server/http.go) so an old bookmark still lands.
 const SECTION_PATHS: Record<SectionId, string> = {
   overview: "/dashboard",
-  plugins: "/plugin",
+  plugins: "/dashboard/plugin",
   database: "/dashboard/database",
   protection: "/dashboard/protection",
   settings: "/dashboard/settings",
