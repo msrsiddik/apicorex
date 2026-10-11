@@ -125,12 +125,13 @@ func NewHTTP(
 	// gateway dashboard — embedded Next.js SPA. The static assets are public;
 	// the SPA itself gates on APICOREX_SECRET via its own login screen, and
 	// its write actions are session-token gated (see controlplane admin routes).
-	// /plugin is the SPA's plugins-tab page, client-side-routed to its own URL
-	// (see admin/app/page.tsx) — it's the same index.html, just requested
-	// directly instead of via the /dashboard/*filepath wildcard.
+	// Every screen is under /dashboard/ (see admin/app/page.tsx).
 	if dashboardHandler != nil {
 		engine.GET("/dashboard/*filepath", dashboardHandler)
-		engine.GET("/plugin", dashboardHandler)
+		// The plugins screen's old address, kept so a bookmark still lands.
+		engine.GET("/plugin", func(c *gin.Context) {
+			c.Redirect(http.StatusMovedPermanently, "/dashboard/plugin")
+		})
 	}
 
 	// strip any client-supplied X-ApiCoreX-* headers (anti-spoofing) on every request
