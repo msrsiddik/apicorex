@@ -8,6 +8,19 @@
 // somewhere other than Jenkins — losing it loses every stored secret, the
 // snapshots included.
 
+// minutes reads a timeout parameter: a whole number of minutes, or the
+// default when it is blank or not a number. A parameter added to this file is
+// null on the first build after it lands — Jenkins learns a job's parameters
+// by running it — so every timeout needs a default here, not only in the
+// parameter's own defaultValue.
+//
+// Plain regex and Integer.parseInt rather than Groovy's isInteger/toInteger:
+// the sandbox this file runs in has refused helpers like those before.
+def minutes(value, int fallback) {
+    def v = value == null ? '' : value.toString().trim()
+    return (v ==~ /[1-9][0-9]{0,3}/) ? Integer.parseInt(v) : fallback
+}
+
 pipeline {
     agent any
 
@@ -18,7 +31,11 @@ pipeline {
         // pruned one — which takes most of fifteen minutes on its own. Was 15,
         // which a cold build of the image first overran on 2026-10-09: the job
         // was killed mid-compile and the old container kept serving.
-        timeout(time: 40, unit: 'MINUTES')
+        //
+        // The stages that can run long carry limits of their own
+        // (TEST_TIMEOUT_MINUTES, DEPLOY_TIMEOUT_MINUTES), so a timeout names
+        // the stage that ran over; this one is the backstop for the whole job.
+        timeout(time: minutes(params.JOB_TIMEOUT_MINUTES, 60), unit: 'MINUTES')
     }
 
     // All blank by default — docker-compose.yml's ${VAR:-default} only falls
@@ -26,6 +43,7 @@ pipeline {
     // defaults. Fill one in via "Build with Parameters" to override just that
     // value for this run.
     parameters {
+        // ── Deploy ──────────────────────────────────────────────────────────
         // Picks which Jenkins agent the Deploy stage runs on, so one job can
         // target dev, staging, or prod just by switching this value. Dashboard,
         // Vet, Test and Build always run on whichever agent `agent any` picks
@@ -38,16 +56,29 @@ pipeline {
         // TARGET_SERVER, for the build that is meant to ship.
         booleanParam(name: 'DEPLOY', defaultValue: false, description: 'Build the image and (re)start the container on TARGET_SERVER. Off means verify only.')
         booleanParam(name: 'DEPLOY_OWN_POSTGRES', defaultValue: false, description: 'Also start the shared Postgres container (docker-compose.yml\'s "postgres" service). Off by default: Core itself never touches a database, so this only ever starts one on the plugins\' behalf, and by the time there is anything to lose the database is usually already running somewhere this job did not put it. Tick it for a first deploy, or wherever this job is the thing that owns Postgres. Leaving it off does not stop a container that is already up — the deploy omits the compose profile rather than tearing anything down.')
+
+        // ── Build and test ──────────────────────────────────────────────────
+        // Time limits, in minutes. Raise one for a build known to be slow — a
+        // cold image cache, a busy agent — rather than editing this file.
+        string(name: 'JOB_TIMEOUT_MINUTES', defaultValue: '60', description: 'The whole build\'s limit, in minutes: a backstop over the stages\' own.')
+        string(name: 'TEST_TIMEOUT_MINUTES', defaultValue: '20', description: 'The Test stage\'s limit, in minutes. go test gets five minutes less, so it reports a hang itself.')
+        string(name: 'DEPLOY_TIMEOUT_MINUTES', defaultValue: '25', description: 'The Deploy stage\'s limit, in minutes: the image build and the container restart.')
+
+        // ── Gateway ─────────────────────────────────────────────────────────
         string(name: 'CORE_PORT', defaultValue: '', description: 'Host+container port for Core (compose default: 9999)')
-        string(name: 'POSTGRES_PORT', defaultValue: '', description: 'Host port for shared Postgres (compose default: 15432)')
-        string(name: 'POSTGRES_USER', defaultValue: '', description: 'compose default: apicorex')
-        string(name: 'POSTGRES_DB', defaultValue: '', description: 'compose default: apicorex')
+        string(name: 'CORE_BIND', defaultValue: '', description: 'Interface the gateway port publishes on (compose default: 0.0.0.0). Do not set 127.0.0.1 while plugins reach Core through host.docker.internal — see docker-compose.yml.')
         string(name: 'CORS_ALLOWED_ORIGINS', defaultValue: '', description: 'Comma-separated browser origins (compose default: unrestricted)')
         string(name: 'LOGIN_URL', defaultValue: '', description: 'Where a browser with no session is sent, e.g. /login. A path on this origin, not a URL. Blank keeps the JSON 401 an API client expects, which is not what a person navigating to a page should see.')
         string(name: 'PRODUCT_HOSTS', defaultValue: '', description: 'Hostnames that stand for one plugin surface, e.g. panel.example.com=/school,gl.example.com=/accounting. Needs the reverse proxy to preserve Host. A malformed entry stops Core from starting.')
         string(name: 'ONDEMAND_TLS_PORT', defaultValue: '', description: 'Turns on the on-demand TLS gate the reverse proxy asks before issuing a certificate for a tenant-owned hostname (compose default: off). 9998 to match Caddyfile.example.')
-        string(name: 'CORE_BIND', defaultValue: '', description: 'Interface the gateway port publishes on (compose default: 0.0.0.0). Do not set 127.0.0.1 while plugins reach Core through host.docker.internal — see docker-compose.yml.')
         string(name: 'OTEL_EXPORTER_OTLP_ENDPOINT', defaultValue: '', description: 'OTLP endpoint (compose default: tracing off)')
+
+        // ── Shared Postgres ─────────────────────────────────────────────────
+        string(name: 'POSTGRES_PORT', defaultValue: '', description: 'Host port for shared Postgres (compose default: 15432)')
+        string(name: 'POSTGRES_USER', defaultValue: '', description: 'compose default: apicorex')
+        string(name: 'POSTGRES_DB', defaultValue: '', description: 'compose default: apicorex')
+
+        // ── Protection defaults ─────────────────────────────────────────────
         string(name: 'CONFIG_FILE', defaultValue: '', description: 'Path to per-plugin limit overrides YAML. Copied into the store once per plugin; after that set limits in the dashboard (Protection).')
         string(name: 'RATE_PER_SEC', defaultValue: '', description: 'for every plugin the dashboard does not set it for. compose default: 1000')
         string(name: 'BULKHEAD_MAX', defaultValue: '', description: 'for every plugin the dashboard does not set it for. compose default: 100')
@@ -55,9 +86,15 @@ pipeline {
         string(name: 'CB_RESET_TIMEOUT', defaultValue: '', description: 'for every plugin the dashboard does not set it for. compose default: 30s')
         string(name: 'REQUEST_TIMEOUT', defaultValue: '', description: 'how long a plugin may take to start answering (send headers); streams and downloads are not cut. For every plugin the dashboard does not set it for. compose default: 120s')
         string(name: 'HEALTH_INTERVAL', defaultValue: '', description: 'compose default: 30s')
+
+        // ── Config store ────────────────────────────────────────────────────
         string(name: 'STORE_SNAPSHOT_INTERVAL', defaultValue: '', description: 'How often the config store snapshots itself onto its volume, Go duration; 0 turns it off (compose default: 24h)')
-        string(name: 'STORE_BACKUP_REMOTE', defaultValue: '', description: 'rclone remote:path the store\'s snapshots are copied to, e.g. gdrive-crypt:core-store. Blank keeps them on the server only. Set, it needs the STORE_RCLONE_CONF_B64 credential.')
         string(name: 'STORE_SNAPSHOT_KEEP', defaultValue: '', description: 'Snapshots kept (compose default: 7)')
+        string(name: 'STORE_BACKUP_REMOTE', defaultValue: '', description: 'rclone remote:path the store\'s snapshots are copied to, e.g. gdrive-crypt:core-store. Blank keeps them on the server only. Set, it needs the STORE_RCLONE_CONF_B64 credential.')
+
+        // ── Secrets ─────────────────────────────────────────────────────────
+        // CORE_MASTER_KEY is not here: it comes from the Credentials Store —
+        // see the note at the top of this file.
         password(name: 'POSTGRES_PASSWORD', defaultValue: '', description: 'compose default: apicorex')
         password(name: 'PLUGIN_API_KEY', defaultValue: '', description: 'Shared secret with plugins (compose default: change-me-plugin-key)')
         password(name: 'APICOREX_SECRET', defaultValue: '', description: 'compose default: apicorex-secret')
@@ -89,11 +126,25 @@ pipeline {
         }
 
         stage('Test') {
+            options {
+                // go test's own -timeout is five minutes less than this, so
+                // go test is the one that reports a hang, with a goroutine
+                // dump, rather than Jenkins with nothing.
+                timeout(time: minutes(params.TEST_TIMEOUT_MINUTES, 20), unit: 'MINUTES')
+            }
+            environment {
+                TEST_MINUTES = "${minutes(params.TEST_TIMEOUT_MINUTES, 20)}"
+            }
             steps {
                 // -count=1 so a rerun actually runs: without it Go reports
                 // "(cached)" per package and executes nothing, which is easy to
                 // read as a green test run that never happened.
-                sh 'go test ./... -v -count=1'
+                sh '''
+                    # Five minutes inside the Test stage's limit, never under five.
+                    go_timeout=$(( TEST_MINUTES - 5 ))
+                    [ "$go_timeout" -lt 5 ] && go_timeout=5
+                    go test ./... -v -count=1 -timeout "${go_timeout}m"
+                '''
             }
         }
 
@@ -124,6 +175,11 @@ pipeline {
                 expression { params.DEPLOY }
             }
             agent { label params.TARGET_SERVER }
+            options {
+                // The image build and the container restart: quick from cached
+                // layers, minutes when a dependency or the UI changed.
+                timeout(time: minutes(params.DEPLOY_TIMEOUT_MINUTES, 25), unit: 'MINUTES')
+            }
             environment {
                 DEPLOY_OWN_POSTGRES = "${params.DEPLOY_OWN_POSTGRES}"
                 CORE_PORT = "${params.CORE_PORT}"
